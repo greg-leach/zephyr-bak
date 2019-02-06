@@ -49,4 +49,6 @@ config MODEM_SHELL
 source "drivers/modem/Kconfig.ublox-sara-r4"
 source "drivers/modem/Kconfig.wncm14a2a"
 
+source "drivers/modem/Kconfig.hl7800"
+
 endif # MODEM
