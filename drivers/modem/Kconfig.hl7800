@@ -1,0 +1,248 @@
+# Kconfig - Sierra Wireless HL7800 driver options
+
+#
+# Copyright (c) 2019 Laird Connectivity
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+
+menuconfig MODEM_HL7800
+	bool "Enable Sierra Wireless HL7800 modem driver"
+	select MODEM_RECEIVER
+	select NET_OFFLOAD
+	select DEVICE_POWER_MANAGEMENT
+	imply GPIO
+	help
+	  Choose this setting to enable Sierra Wireless HL7800 LTE-M/NB-IoT modem driver.
+
+if MODEM_HL7800
+
+config MODEM_HL7800_APN_NAME
+	string "APN name for establishing network connection"
+	default ""
+	help
+	  This setting is used in the AT+KCNXCFG command to set the APN name
+	  for the network connection context.
+
+choice
+	prompt "Radio Access Technology (RAT)"
+	default MODEM_HL7800_CAT_M1
+
+config MODEM_HL7800_CAT_M1
+	bool "LTE cat M1"
+	help
+	  Enable LTE cat M1 (LTE-M1) mode
+
+config MODEM_HL7800_CAT_NB1
+	bool "LTE cat NB1"
+	help
+	  Enable LTE cat NB1 (NB-IoT) mode
+endchoice
+
+menuconfig MODEM_HL7800_CONFIGURE_BANDS
+	bool "Configure modem bands"
+	default "y"
+	help
+	  Choose this setting to configure which LTE bands the HL7800 modem should use.
+
+if MODEM_HL7800_CONFIGURE_BANDS
+
+config MODEM_HL7800_BAND_1
+	bool "Enable Band 1  (2000MHz)"
+	default "n"
+	help
+	  Enable Band 1 (2000MHz)
+
+config MODEM_HL7800_BAND_2
+	bool "Enable Band 2  (1900MHz)"
+	default "y"
+	help
+	  Enable Band 2 (1900MHz)
+
+config MODEM_HL7800_BAND_3
+	bool "Enable Band 3  (1800MHz)"
+	default "n"
+	help
+	  Enable Band 3 (1800MHz)
+
+config MODEM_HL7800_BAND_4
+	bool "Enable Band 4  (1700MHz)"
+	default "y"
+	help
+	  Enable Band 4 (1700MHz)
+
+config MODEM_HL7800_BAND_5
+	bool "Enable Band 5  (850MHz)"
+	default "y"
+	help
+	  Enable Band 5 (850MHz)
+
+config MODEM_HL7800_BAND_8
+	bool "Enable Band 8  (900MHz)"
+	default "n"
+	help
+	  Enable Band 8 (900MHz)
+
+config MODEM_HL7800_BAND_9
+	bool "Enable Band 9  (1900MHz)"
+	default "n"
+	help
+	  Enable Band 9 (1900MHz)
+
+config MODEM_HL7800_BAND_10
+	bool "Enable Band 10 (2100MHz)"
+	default "n"
+	help
+	  Enable Band 10 (2100MHz)
+
+config MODEM_HL7800_BAND_12
+	bool "Enable Band 12 (700MHz)"
+	default "y"
+	help
+	  Enable Band 12 (700MHz)
+
+config MODEM_HL7800_BAND_13
+	bool "Enable Band 13 (700MHz)"
+	default "y"
+	help
+	  Enable Band 13 (700MHz)
+
+config MODEM_HL7800_BAND_14
+	bool "Enable Band 14 (700MHz)"
+	default "n"
+	help
+	  Enable Band 14 (700MHz)
+
+config MODEM_HL7800_BAND_17
+	bool "Enable Band 17 (700MHz)"
+	default "y"
+	help
+	  Enable Band 17 (700MHz)
+
+config MODEM_HL7800_BAND_18
+	bool "Enable Band 18 (800MHz)"
+	default "n"
+	help
+	  Enable Band 18 (800MHz)
+
+config MODEM_HL7800_BAND_19
+	bool "Enable Band 19 (800MHz)"
+	default "n"
+	help
+	  Enable Band 19 (800MHz)
+
+config MODEM_HL7800_BAND_20
+	bool "Enable Band 20 (800MHz)"
+	default "y"
+	help
+	  Enable Band 20 (800MHz)
+
+config MODEM_HL7800_BAND_25
+	bool "Enable Band 25 (1900MHz)"
+	default "n"
+	help
+	  Enable Band 25 (1900MHz)
+
+config MODEM_HL7800_BAND_26
+	bool "Enable Band 26 (800MHz)"
+	default "n"
+	help
+	  Enable Band 26 (800MHz)
+
+config MODEM_HL7800_BAND_27
+	bool "Enable Band 27 (800MHz)"
+	default "n"
+	help
+	  Enable Band 27 (800MHz)
+
+config MODEM_HL7800_BAND_28
+	bool "Enable Band 28 (700MHz)"
+	default "n"
+	help
+	  Enable Band 28 (700MHz)
+
+config MODEM_HL7800_BAND_66
+	bool "Enable Band 66 (1800MHz)"
+	default "n"
+	help
+	  Enable Band 66 (1800MHz)
+
+endif # MODEM_HL7800_CONFIGURE_BAND
+
+menuconfig MODEM_HL7800_LOW_POWER_MODE
+	bool "Enable low power modes"
+	help
+		Choose this setting to enable a low power mode for the HL7800 modem
+
+if MODEM_HL7800_LOW_POWER_MODE
+
+choice
+	prompt "Low Power Mode"
+	default MODEM_HL7800_EDRX
+
+config MODEM_HL7800_EDRX
+	bool "eDRX"
+	help
+	  Enable LTE eDRX
+
+config MODEM_HL7800_PSM
+	bool "PSM"
+	help
+	  Enable Power Save Mode (PSM)
+endchoice
+
+if MODEM_HL7800_EDRX
+
+config MODEM_HL7800_EDRX_VALUE
+	string "Requested eDRX timer"
+	default "0101"
+	help
+	  Half a byte in a 4-bit format. The eDRX value refers to bit 4 to 1
+	  of octet 3 of the Extended DRX parameters information element.
+
+endif # MODEM_HL7800_EDRX
+
+if MODEM_HL7800_PSM
+
+config MODEM_HL7800_PSM_PERIODIC_TAU
+	string "Requested extended periodic TAU timer"
+	default "10000010"
+	help
+	  Requested extended periodic TAU (tracking area update) value (T3412)
+	  to be allocated to the UE in E-UTRAN. One byte in an 8-bit format.
+
+config MODEM_HL7800_PSM_ACTIVE_TIME
+	string "Requested active time"
+	default "00001111"
+	help
+	  Requested Active Time value (T3324) to be allocated to the UE.
+	  One byte in an 8-bit format.
+
+endif # MODEM_HL7800_PSM
+
+endif # MODEM_HL7800_LOW_POWER_MODE
+
+config MODEM_HL7800_RX_STACK_SIZE
+	int "Size of the stack for the HL7800 modem driver RX thread"
+	default 1024
+	help
+	  This stack is used by the HL7800 RX thread.
+
+config MODEM_HL7800_RX_WORKQ_STACK_SIZE
+	int "Size of the stack for the HL7800 modem driver work queue"
+	default 2048
+	help
+	  This stack is used by the work queue to pass off net_pkt data
+	  to the rest of the network stack, letting the rx thread continue
+	  processing data.
+
+config MODEM_HL7800_INIT_PRIORITY
+	int "HL7800 driver init priority"
+	default 80
+	help
+	  HL7800 device driver initialization priority.
+	  Do not mess with it unless you know what you are doing.
+	  Note that the priority needs to be lower than the net stack
+	  so that it can start before the networking sub-system.
+
+endif # MODEM_HL7800
