@@ -48,4 +48,49 @@ config MODEM_SHELL
 
 source "drivers/modem/Kconfig.wncm14a2a"
 
+config MODEM_HL7800
+	bool "Enable Sierra Wireless HL7800 modem driver"
+	select MODEM_RECEIVER
+	select NET_OFFLOAD
+	select GPIO_NRF_P1 if SOC_NRF52840
+	select UART_1_NRF_UARTE if SOC_NRF52840
+	select UART_1_NRF_FLOW_CONTROL if SOC_NRF52840
+	help
+	  Choose this setting to enable Sierra Wireless HL7800 LTE-M/NB-IoT modem driver.
+
+config MODEM_HL7800_RX_STACK_SIZE
+	int "Size of the stack for the HL7800 modem driver RX thread"
+	depends on MODEM_HL7800
+	default 1028
+	help
+	  This stack is used by the HL7800 RX thread.
+
+config MODEM_HL7800_RX_WORKQ_STACK_SIZE
+	int "Size of the stack for the HL7800 modem driver work queue"
+	depends on MODEM_HL7800
+	default 2048
+	help
+	  This stack is used by the work queue to pass off net_pkt data
+	  to the rest of the network stack, letting the rx thread continue
+	  processing data.
+
+config MODEM_HL7800_APN_NAME
+	string "APN name for establishing network connection"
+	depends on MODEM_HL7800
+	default "jtm2m"
+	help
+	  This setting is used in the AT+KCNXCFG command to set the APN name
+	  for the network connection context.  Normally, don't need to change
+	  this value.
+
+config MODEM_HL7800_INIT_PRIORITY
+	int "HL7800 driver init priority"
+	depends on MODEM_HL7800
+	default 80
+	help
+	  HL7800 device driver initialization priority.
+	  Do not mess with it unless you know what you are doing.
+	  Note that the priority needs to be lower than the net stack
+	  so that it can start before the networking sub-system.
+
 endif # MODEM
