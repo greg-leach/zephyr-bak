@@ -29,4 +29,39 @@ properties:
       type: compound
       category: required
       generation: define, use-prop-name
+
+    mdm-pwr-on-gpios:
+      type: compound
+      category: required
+      generation: define, use-prop-name
+
+    mdm-fast-shutd-gpios:
+      type: compound
+      category: required
+      generation: define, use-prop-name
+
+    mdm-uart-dtr-gpios:
+      type: compound
+      category: required
+      generation: define, use-prop-name
+
+    mdm-lte-tx-on-gpios:
+      type: compound
+      category: required
+      generation: define, use-prop-name
+
+    mdm-gps-ext-lna-en-gpios:
+      type: compound
+      category: required
+      generation: define, use-prop-name
+
+    mdm-uart-cts-gpios:
+      type: compound
+      category: required
+      generation: define, use-prop-name
+
+    mdm-vgpio-gpios:
+      type: compound
+      category: required
+      generation: define, use-prop-name
 ...

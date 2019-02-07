@@ -14,6 +14,6 @@ if(CONFIG_MODEM_WNCM14A2A)
 endif()
 
 if (CONFIG_MODEM_HL7800)
-    zephyr_library_include_directories(${ZEPHYR_BASE}/subsys/net/ip)
-    zephyr_library_sources(hl7800.c)
+  zephyr_library_include_directories(${ZEPHYR_BASE}/subsys/net/ip)
+  zephyr_library_sources(hl7800.c)
 endif()
