@@ -55,12 +55,12 @@ properties:
       category: required
       generation: define, use-prop-name
 
-    mdm-uart-cts-gpios:
+    mdm-vgpio-gpios:
       type: compound
       category: required
       generation: define, use-prop-name
 
-    mdm-vgpio-gpios:
+    mdm-uart-dsr-gpios:
       type: compound
       category: required
       generation: define, use-prop-name

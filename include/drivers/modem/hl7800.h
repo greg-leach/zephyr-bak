@@ -21,10 +21,20 @@
 extern "C" {
 #endif
 
-void mdm_hl7800_power_off(void);
-void mdm_hl7800_reset(void);
+enum hl7800_network_state {
+	NOT_REGISTERED = 0,
+	HOME_NETWORK,
+	SEARCHING,
+	REG_DENIED,
+	OUT_OF_COVERAGE,
+	ROAMING,
+	EMERGENCY = 8,
+};
+
+s32_t mdm_hl7800_power_off(void);
+s32_t mdm_hl7800_reset(void);
 void mdm_hl7800_wakeup(bool);
-void mdm_hl7800_send_at_cmd(const u8_t *data);
+s32_t mdm_hl7800_send_at_cmd(const u8_t *data);
 
 #ifdef __cplusplus
 }
