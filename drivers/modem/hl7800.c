@@ -517,8 +517,8 @@ static int send_at_cmd(struct hl7800_socket *sock, const u8_t *data,
 			retries = 0;
 		}
 		if (ret) {
-			LOG_ERR("Err send %s: %d, tries left: %d", data, ret,
-				retries);
+			LOG_ERR("Err send %s: %d, tries left: %d",
+				log_strdup(data), ret, retries);
 		}
 	} while (ret != 0 && retries > 0);
 
@@ -599,7 +599,7 @@ static int send_data(struct hl7800_socket *sock, struct net_pkt *pkt)
 			LOG_ERR("Invalid dst addr");
 			return -EINVAL;
 		}
-		snprintk(buf, sizeof(buf), "AT+KUDPSND=%d,\"%s\",%d,%d\r\n",
+		snprintk(buf, sizeof(buf), "AT+KUDPSND=%d,\"%s\",%u,%u\r\n",
 			 sock->socket_id, dstAddr,
 			 net_sin(&sock->dst)->sin_port,
 			 net_buf_frags_len(frag));
@@ -1090,9 +1090,8 @@ static void iface_status_work_cb(struct k_work *work)
 		break;
 	default:
 		if (ictx.iface && net_if_is_up(ictx.iface)) {
-			if (!net_if_ipv4_addr_rm(ictx.iface, &ictx.ipv4Addr)) {
-				LOG_WRN("Could not remove IPv4 addr");
-			}
+			/* we dont care if removing IP fails */
+			net_if_ipv4_addr_rm(ictx.iface, &ictx.ipv4Addr);
 			net_if_down(ictx.iface);
 		}
 #ifndef CONFIG_MODEM_HL7800_LOW_POWER_MODE
@@ -1273,6 +1272,14 @@ static void on_cmd_sock_notif(struct net_buf **buf, u16_t len)
 	ictx.last_socket_id = strtol(id, NULL, 0);
 	sock = socket_from_id(ictx.last_socket_id);
 	if (sock) {
+		/* Send NULL packet to callback to notify upper stack layers
+		*  that the peer closed the connection or there was an error.
+		*  This is so an app will not get stuck in recv() forever.
+		*  Let's do the callback processing in a different work queue in
+		*  case the app takes a long time. sock->recv_pkt should
+		*  already be NULL at this point.
+		*/
+		k_work_submit_to_queue(&hl7800_workq, &sock->recv_cb_work);
 		k_sem_give(&sock->sock_send_sem);
 	} else {
 		LOG_ERR("Could not find socket id (%d)", ictx.last_socket_id);
@@ -1506,10 +1513,10 @@ static void on_cmd_sockdataind(struct net_buf **buf, u16_t len)
 	if (left_bytes > 0) {
 		LOG_DBG("socket_id:%d left_bytes:%d", socket_id, left_bytes);
 		if (sock->type == SOCK_DGRAM) {
-			snprintk(sendbuf, sizeof(sendbuf), "AT+KUDPRCV=%d,%d",
+			snprintk(sendbuf, sizeof(sendbuf), "AT+KUDPRCV=%d,%u",
 				 sock->socket_id, left_bytes);
 		} else {
-			snprintk(sendbuf, sizeof(sendbuf), "AT+KTCPRCV=%d,%d",
+			snprintk(sendbuf, sizeof(sendbuf), "AT+KTCPRCV=%d,%u",
 				 sock->socket_id, left_bytes);
 		}
 
@@ -1864,7 +1871,9 @@ static int hl7800_modem_reset(void)
 
 	ictx.restarting = true;
 	/* bring down network interface */
-	net_if_down(ictx.iface);
+	if (ictx.iface) {
+		net_if_down(ictx.iface);
+	}
 
 	/* stop RSSI delay work */
 	k_delayed_work_cancel(&ictx.rssi_query_work);
@@ -2177,7 +2186,7 @@ static int offload_connect(struct net_context *context,
 {
 	int ret = 0;
 	int dst_port = -1;
-	char cmd_cfg[sizeof("AT+KTCPCFG=#,#,###.###.###.###,#####")];
+	char cmd_cfg[sizeof("AT+KTCPCFG=#,#,\"###.###.###.###\",#####")];
 	char cmd_con[sizeof("AT+KTCPCNX=##")];
 	struct hl7800_socket *sock;
 
@@ -2228,7 +2237,7 @@ static int offload_connect(struct net_context *context,
 		/* Configure/create TCP connection */
 		if (!sock->created) {
 			snprintk(cmd_cfg, sizeof(cmd_cfg),
-				 "AT+KTCPCFG=%d,%d,\"%s\",%d", 1, 0,
+				 "AT+KTCPCFG=%d,%d,\"%s\",%u", 1, 0,
 				 hl7800_sprint_ip_addr(addr), dst_port);
 			ret = send_at_cmd(sock, cmd_cfg, MDM_CMD_SEND_TIMEOUT,
 					  0);
@@ -2256,6 +2265,8 @@ static int offload_connect(struct net_context *context,
 		}
 		if (ret < 0) {
 			LOG_ERR("+KTCP_IND/NOTIF ret:%d", ret);
+		} else {
+			net_context_set_state(context, NET_CONTEXT_CONNECTED);
 		}
 	}
 
