@@ -227,6 +227,7 @@ struct hl7800_iface_ctx {
 	struct gpio_callback mdm_vgpio_cb;
 	struct gpio_callback mdm_uart_dsr_cb;
 	u8_t vgpio_state;
+	u8_t dsr_state;
 
 	/* RX specific attributes */
 	struct mdm_receiver_context mdm_ctx;
@@ -1817,6 +1818,7 @@ void mdm_uart_dsr_callback(struct device *port, struct gpio_callback *cb,
 	u32_t val;
 	gpio_pin_read(ictx.gpio_port_dev[MDM_UART_DSR],
 		      pinconfig[MDM_UART_DSR].pin, &val);
+	ictx.dsr_state = val;
 	if (ictx.sleepState == WAKING && !val) {
 		ictx.sleepState = AWAKE;
 		k_sem_give(&ictx.mdm_awake);
@@ -1901,7 +1903,8 @@ static int hl7800_modem_reset(void)
 	LOG_DBG("Waiting for modem to boot...");
 	ret = k_sem_take(&ictx.mdm_awake, MDM_BOOT_TIME);
 	if (ret) {
-		LOG_ERR("Err waiting for boot: %d", ret);
+		LOG_ERR("Err waiting for boot: %d, DSR: %u", ret,
+			ictx.dsr_state);
 	}
 
 	LOG_DBG("Modem booted!");
@@ -2101,6 +2104,8 @@ static int offload_get(sa_family_t family, enum net_sock_type type,
 	}
 
 	(*context)->offload_context = sock;
+	/* set the context iface index to our iface */
+	(*context)->iface = net_if_get_by_iface(ictx.iface);
 	sock->family = family;
 	sock->type = type;
 	sock->ip_proto = ip_proto;
