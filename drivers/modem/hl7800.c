@@ -19,10 +19,11 @@ LOG_MODULE_REGISTER(LOG_DOMAIN);
 #include <device.h>
 #include <init.h>
 
-#include <net/net_context.h>
 #include <net/net_if.h>
+#include <net/net_context.h>
 #include <net/net_offload.h>
 #include <net/net_pkt.h>
+#include <net/dns_resolve.h>
 #if defined(CONFIG_NET_IPV6)
 #include "ipv6.h"
 #endif
@@ -73,6 +74,8 @@ enum mdm_control_pins {
 	MDM_UART_DSR,
 	MAX_MDM_CONTROL_PINS,
 };
+
+enum net_operator_status { NO_OPERATOR, REGISTERED };
 
 static const struct mdm_control_pinconfig pinconfig[] = {
 	/* MDM_RESET */
@@ -174,6 +177,8 @@ static const struct mdm_control_pinconfig pinconfig[] = {
 
 #define RSSI_TIMEOUT_SECS 30
 
+#define DNS_WORK_DELAY_SECS 1
+
 NET_BUF_POOL_DEFINE(mdm_recv_pool, MDM_RECV_MAX_BUF, MDM_RECV_BUF_SIZE, 0,
 		    NULL);
 
@@ -182,7 +187,7 @@ static u8_t mdm_recv_buf[MDM_MAX_DATA_LENGTH];
 /* RX thread structures */
 K_THREAD_STACK_DEFINE(hl7800_rx_stack, CONFIG_MODEM_HL7800_RX_STACK_SIZE);
 struct k_thread hl7800_rx_thread;
-#define RX_THREAD_PRIORITY K_PRIO_COOP(8)
+#define RX_THREAD_PRIORITY K_PRIO_COOP(7)
 
 /* RX thread work queue */
 K_THREAD_STACK_DEFINE(hl7800_workq_stack,
@@ -217,9 +222,10 @@ struct hl7800_socket {
 struct hl7800_iface_ctx {
 	struct net_if *iface;
 	u8_t mac_addr[6];
-	struct in_addr ipv4Addr;
+	struct in_addr ipv4Addr, subnet, gateway, dns;
 	bool restarting;
 	bool initialized;
+	char dns_string[sizeof("###.###.###.###")];
 
 	/* GPIO PORT devices */
 	struct device *gpio_port_dev[MAX_MDM_CONTROL_PINS];
@@ -246,6 +252,7 @@ struct hl7800_iface_ctx {
 
 	/* work */
 	struct k_work iface_status_work;
+	struct k_delayed_work dns_work;
 
 	/* modem data  */
 	/* NOTE: make sure length is +1 for null char */
@@ -264,6 +271,7 @@ struct hl7800_iface_ctx {
 	bool allowSleep;
 	enum sleep_state sleepState;
 	enum hl7800_network_state networkState;
+	enum net_operator_status operatorStatus;
 };
 
 struct cmd_handler {
@@ -803,6 +811,7 @@ static void on_cmd_atcmdinfo_manufacturer(struct net_buf **buf, u16_t len)
 	struct net_buf *frag = NULL;
 	u16_t offset;
 	size_t out_len;
+	int len_no_null = MDM_MANUFACTURER_LENGTH - 1;
 
 	/* make sure revision data is received */
 	if (len < MDM_MANUFACTURER_LENGTH) {
@@ -824,6 +833,12 @@ static void on_cmd_atcmdinfo_manufacturer(struct net_buf **buf, u16_t len)
 		LOG_WRN("Unable to find mfg (net_buf_findcrlf)");
 		return;
 	}
+	if (len < len_no_null) {
+		LOG_WRN("mfg too short (len:%d)", len);
+	} else if (len > len_no_null) {
+		LOG_WRN("mfg too long (len:%d)", len);
+		len = MDM_MANUFACTURER_LENGTH;
+	}
 
 	out_len = net_buf_linearize(ictx.mdm_manufacturer,
 				    sizeof(ictx.mdm_manufacturer) - 1, *buf, 0,
@@ -837,6 +852,7 @@ static void on_cmd_atcmdinfo_model(struct net_buf **buf, u16_t len)
 	struct net_buf *frag = NULL;
 	u16_t offset;
 	size_t out_len;
+	int len_no_null = MDM_MODEL_LENGTH - 1;
 
 	/* make sure revision data is received */
 	if (len < MDM_MODEL_LENGTH) {
@@ -858,6 +874,12 @@ static void on_cmd_atcmdinfo_model(struct net_buf **buf, u16_t len)
 		LOG_WRN("Unable to find model (net_buf_findcrlf)");
 		return;
 	}
+	if (len < len_no_null) {
+		LOG_WRN("model too short (len:%d)", len);
+	} else if (len > len_no_null) {
+		LOG_WRN("model too long (len:%d)", len);
+		len = MDM_MODEL_LENGTH;
+	}
 
 	out_len = net_buf_linearize(ictx.mdm_model, sizeof(ictx.mdm_model) - 1,
 				    *buf, 0, len);
@@ -870,6 +892,7 @@ static void on_cmd_atcmdinfo_revision(struct net_buf **buf, u16_t len)
 	struct net_buf *frag = NULL;
 	u16_t offset;
 	size_t out_len;
+	int len_no_null = MDM_REVISION_LENGTH - 1;
 
 	/* make sure revision data is received */
 	if (len < MDM_REVISION_LENGTH) {
@@ -891,6 +914,12 @@ static void on_cmd_atcmdinfo_revision(struct net_buf **buf, u16_t len)
 		LOG_WRN("Unable to find rev (net_buf_findcrlf)");
 		return;
 	}
+	if (len < len_no_null) {
+		LOG_WRN("revision too short (len:%d)", len);
+	} else if (len > len_no_null) {
+		LOG_WRN("revision too long (len:%d)", len);
+		len = MDM_REVISION_LENGTH;
+	}
 
 	out_len = net_buf_linearize(
 		ictx.mdm_revision, sizeof(ictx.mdm_revision) - 1, *buf, 0, len);
@@ -898,11 +927,12 @@ static void on_cmd_atcmdinfo_revision(struct net_buf **buf, u16_t len)
 	LOG_INF("Revision: %s", ictx.mdm_revision);
 }
 
-static void on_cmd_atcmdecho_nosock_imei(struct net_buf **buf, u16_t len)
+static void on_cmd_atcmdinfo_imei(struct net_buf **buf, u16_t len)
 {
 	struct net_buf *frag = NULL;
 	u16_t offset;
 	size_t out_len;
+	int len_no_null = MDM_IMEI_LENGTH - 1;
 
 	/* make sure IMEI data is received */
 	if (len < MDM_IMEI_LENGTH) {
@@ -924,6 +954,12 @@ static void on_cmd_atcmdecho_nosock_imei(struct net_buf **buf, u16_t len)
 		LOG_WRN("Unable to find IMEI (net_buf_findcrlf)");
 		return;
 	}
+	if (len < len_no_null) {
+		LOG_WRN("IMEI too short (len:%d)", len);
+	} else if (len > len_no_null) {
+		LOG_WRN("IMEI too long (len:%d)", len);
+		len = MDM_IMEI_LENGTH;
+	}
 
 	out_len = net_buf_linearize(ictx.mdm_imei, sizeof(ictx.mdm_imei) - 1,
 				    *buf, 0, len);
@@ -932,43 +968,108 @@ static void on_cmd_atcmdecho_nosock_imei(struct net_buf **buf, u16_t len)
 	LOG_INF("IMEI: %s", ictx.mdm_imei);
 }
 
-/* Handler: +CGPADDR: <cid>[,<PDP_addr_1>[,<PDP_addr_2>] */
+static void dns_work_cb(struct k_work *work)
+{
+#ifdef CONFIG_DNS_RESOLVER
+	int ret;
+	/* set new DNS addr in DNS resolver */
+	struct dns_resolve_context *dnsCtx = dns_resolve_get_default();
+	dns_resolve_close(dnsCtx);
+	const char *dns_servers_str[] = { ictx.dns_string };
+	ret = dns_resolve_init(dnsCtx, dns_servers_str, NULL);
+	if (ret < 0) {
+		LOG_ERR("dns_resolve_init fail (%d)", ret);
+		return;
+	}
+#endif
+}
+
+/* Handler: +CGCONTRDP: <cid>,<bearer_id>,<apn>,<local_addr and subnet_mask>,
+*			<gw_addr>,<DNS_prim_addr>,<DNS_sec_addr> */
 static void on_cmd_atcmdinfo_ipaddr(struct net_buf **buf, u16_t len)
 {
 	int ret;
-	char *delim1, *delim2, *endQuote;
+	int numDelims = 7;
+	char *delims[numDelims];
 	size_t out_len;
 	char value[len + 1];
+	char *searchStart, *addrStart, *smStart, *gwStart, *dnsStart;
+	struct in_addr newIpv4Addr;
 
 	out_len = net_buf_linearize(value, sizeof(value), *buf, 0, len);
 	value[out_len] = 0;
+	searchStart = value;
 
-	/* First comma separator marks the end of <cid> */
-	delim1 = strchr(value, ',');
-	if (!delim1) {
-		LOG_ERR("Missing 1st comma");
-		return;
+	/* find all delimiters (,) */
+	for (int i = 0; i < numDelims; i++) {
+		delims[i] = strchr(searchStart, ',');
+		if (!delims[i]) {
+			LOG_ERR("Could not find delim %d, val: %s", i,
+				log_strdup(value));
+			return;
+		}
+		/* Start next search after current delim location */
+		searchStart = delims[i] + 1;
 	}
 
-	/* Skip the ',' and '"' */
-	delim1 += 2;
-
-	/* Search for end quote */
-	endQuote = strchr(delim1, '"');
-	if (!endQuote) {
-		LOG_ERR("Missing IPv4 end quote");
-		return;
+	/* Find start of subnet mask */
+	addrStart = delims[2] + 1;
+	numDelims = 4;
+	searchStart = addrStart;
+	for (int i = 0; i < numDelims; i++) {
+		smStart = strchr(searchStart, '.');
+		if (!smStart) {
+			LOG_ERR("Could not find submask start");
+			return;
+		}
+		/* Start next search after current delim location */
+		searchStart = smStart + 1;
 	}
 
-	int ipv4Len = endQuote - delim1;
+	/* get new IPv4 addr */
+	int ipv4Len = smStart - addrStart;
 	char ipv4AddrStr[ipv4Len + 1];
-	strncpy(ipv4AddrStr, delim1, ipv4Len);
+	strncpy(ipv4AddrStr, addrStart, ipv4Len);
 	ipv4AddrStr[ipv4Len] = 0;
-
-	struct in_addr newIpv4Addr;
 	ret = net_addr_pton(AF_INET, ipv4AddrStr, &newIpv4Addr);
 	if (ret < 0) {
 		LOG_ERR("Invalid IPv4 addr");
+		return;
+	}
+
+	/* move past the '.' */
+	smStart += 1;
+	/* store new subnet mask */
+	int snLen = delims[3] - smStart;
+	char smStr[snLen + 1];
+	strncpy(smStr, smStart, snLen);
+	smStr[snLen] = 0;
+	ret = net_addr_pton(AF_INET, smStr, &ictx.subnet);
+	if (ret < 0) {
+		LOG_ERR("Invalid subnet");
+		return;
+	}
+
+	/* store new gateway */
+	gwStart = delims[3] + 1;
+	int gwLen = delims[4] - gwStart;
+	char gwStr[gwLen + 1];
+	strncpy(gwStr, gwStart, gwLen);
+	gwStr[gwLen] = 0;
+	ret = net_addr_pton(AF_INET, gwStr, &ictx.gateway);
+	if (ret < 0) {
+		LOG_ERR("Invalid gateway");
+		return;
+	}
+
+	/* store new dns */
+	dnsStart = delims[4] + 1;
+	int dnsLen = delims[5] - dnsStart;
+	strncpy(ictx.dns_string, dnsStart, dnsLen);
+	ictx.dns_string[dnsLen] = 0;
+	ret = net_addr_pton(AF_INET, ictx.dns_string, &ictx.dns);
+	if (ret < 0) {
+		LOG_ERR("Invalid dns");
 		return;
 	}
 
@@ -983,22 +1084,64 @@ static void on_cmd_atcmdinfo_ipaddr(struct net_buf **buf, u16_t len)
 			LOG_ERR("Cannot set iface IPv4 addr");
 			return;
 		}
+
+		net_if_ipv4_set_netmask(ictx.iface, &ictx.subnet);
+		net_if_ipv4_set_gw(ictx.iface, &ictx.gateway);
+
 		/* store the new IP addr */
 		net_ipaddr_copy(&ictx.ipv4Addr, &newIpv4Addr);
+
+		/* start DNS update work */
+		s32_t delay = 0;
+		if (!ictx.initialized) {
+			/* Delay this in case the network
+			*  stack is still starting up */
+			delay = K_SECONDS(DNS_WORK_DELAY_SECS);
+		}
+		k_delayed_work_submit_to_queue(&hl7800_workq, &ictx.dns_work,
+					       delay);
 	} else {
 		LOG_ERR("iface NULL");
 	}
 
-	/* Search for second comma
-	*  This is the start of the IPv6 addr
-	*/
-	delim2 = strchr(delim1, ',');
-	if (!delim2) {
-		/* No IPv6 addr present, we are done */
+	/* TODO: IPv6 addr present, store it */
+}
+
+/* Handler: +COPS: <mode>[,<format>,<oper>[,<AcT>]] */
+static void on_cmd_atcmdinfo_operator_status(struct net_buf **buf, u16_t len)
+{
+	size_t out_len;
+	char value[len + 1];
+	int numDelims = 2;
+	char *delims[numDelims];
+	char *searchStart;
+
+	out_len = net_buf_linearize(value, sizeof(value), *buf, 0, len);
+	value[out_len] = 0;
+	LOG_DBG("Operator: %s", log_strdup(value));
+
+	if (len == 1) {
+		/* only mode was returned, there is no operator info */
+		ictx.operatorStatus = NO_OPERATOR;
 		return;
 	}
 
-	/* TODO: IPv6 addr present, store it */
+	searchStart = value;
+
+	/* find all delimiters (,) */
+	for (int i = 0; i < numDelims; i++) {
+		delims[i] = strchr(searchStart, ',');
+		if (!delims[i]) {
+			LOG_ERR("Could not find delim %d, val: %s", i,
+				log_strdup(value));
+			return;
+		}
+		/* Start next search after current delim location */
+		searchStart = delims[i] + 1;
+	}
+
+	/* we found both delimiters, that means we have an operator */
+	ictx.operatorStatus = REGISTERED;
 }
 
 /* Handler: +KGSN: T5640400011101 */
@@ -1007,7 +1150,8 @@ static void on_cmd_atcmdinfo_serial_number(struct net_buf **buf, u16_t len)
 	struct net_buf *frag = NULL;
 	u16_t offset;
 	size_t out_len;
-	int start;
+	int start, sn_len;
+	int len_no_null = MDM_SN_LENGTH - 1;
 
 	/* make sure SN# data is received */
 	if (len < MDM_SN_LENGTH) {
@@ -1038,9 +1182,16 @@ static void on_cmd_atcmdinfo_serial_number(struct net_buf **buf, u16_t len)
 		LOG_WRN("Unable to find sn (net_buf_findcrlf)");
 		return;
 	}
+	sn_len = len - start;
+	if (sn_len < len_no_null) {
+		LOG_WRN("sn too short (len:%d)", sn_len);
+	} else if (sn_len > len_no_null) {
+		LOG_WRN("sn too long (len:%d)", sn_len);
+		len = MDM_SN_LENGTH;
+	}
 
 	out_len = net_buf_linearize(ictx.mdm_sn, sizeof(ictx.mdm_sn) - 1, *buf,
-				    start, len);
+				    start, sn_len);
 	ictx.mdm_sn[out_len] = 0;
 	LOG_INF("Serial #: %s", ictx.mdm_sn);
 }
@@ -1080,11 +1231,20 @@ static void iface_status_work_cb(struct k_work *work)
 	switch (ictx.networkState) {
 	case HOME_NETWORK:
 	case ROAMING:
-#ifndef CONFIG_MODEM_HL7800_LOW_POWER_MODE
-		/* start periodic RSSI reading */
-		hl7800_rssi_query_work(NULL);
-#endif
 		if (ictx.iface && !net_if_is_up(ictx.iface)) {
+			/* bring the iface up */
+			net_if_up(ictx.iface);
+		}
+		break;
+	case OUT_OF_COVERAGE:
+		ret = send_at_cmd(NULL, "AT+COPS?", MDM_CMD_SEND_TIMEOUT, 0);
+		if (ret < 0) {
+			LOG_ERR("AT+COPS ret:%d", ret);
+			break;
+		}
+
+		if (ictx.iface && !net_if_is_up(ictx.iface) &&
+		    ictx.operatorStatus == REGISTERED) {
 			/* bring the iface up */
 			net_if_up(ictx.iface);
 		}
@@ -1102,16 +1262,22 @@ static void iface_status_work_cb(struct k_work *work)
 		break;
 	}
 
-	/* get IP address */
+	/* get IP address info */
 	if (ictx.iface && net_if_is_up(ictx.iface)) {
-		ret = send_at_cmd(NULL, "AT+CGPADDR=1", MDM_CMD_SEND_TIMEOUT,
+#ifndef CONFIG_MODEM_HL7800_LOW_POWER_MODE
+		/* start periodic RSSI reading */
+		hl7800_rssi_query_work(NULL);
+#endif
+		ret = send_at_cmd(NULL, "AT+CGCONTRDP=1", MDM_CMD_SEND_TIMEOUT,
 				  0);
 		if (ret < 0) {
-			LOG_ERR("AT+CGPADDR ret:%d", ret);
+			LOG_ERR("AT+CGCONTRDP ret:%d", ret);
 		}
 	}
 }
 
+/* Handler: +CEREG: <n>,<stat>[,[<lac>],[<ci>],[<AcT>]
+*  [,[<cause_type>],[<reject_cause>] [,[<Active-Time>],[<Periodic-TAU>]]]] */
 static void on_cmd_network_report(struct net_buf **buf, u16_t len)
 {
 	size_t out_len;
@@ -1636,16 +1802,17 @@ static void hl7800_rx(void)
 	static const struct cmd_handler handlers[] = {
 		/* NON-SOCKET COMMAND ECHOES to clear last_socket_id */
 		CMD_HANDLER("ATE1", atcmdecho_nosock),
-		CMD_HANDLER("AT+CGSN", atcmdecho_nosock_imei),
 		CMD_HANDLER("AT+CESQ", atcmdecho_nosock),
-		CMD_HANDLER("AT+CGPADDR=", atcmdecho_nosock),
+		CMD_HANDLER("AT+CGCONTRDP=", atcmdecho_nosock),
 		CMD_HANDLER("AT+KSREP=", atcmdecho_nosock),
 		CMD_HANDLER("AT+CEREG=", atcmdecho_nosock),
+		CMD_HANDLER("AT+CEREG?", atcmdecho_nosock),
 		CMD_HANDLER("AT+CGDCONT=", atcmdecho_nosock),
 		CMD_HANDLER("AT+KCNXCFG=", atcmdecho_nosock),
 		CMD_HANDLER("AT+KSLEEP=", atcmdecho_nosock),
 		CMD_HANDLER("AT+CPSMS=", atcmdecho_nosock),
 		CMD_HANDLER("AT+CEDRXS=", atcmdecho_nosock),
+		CMD_HANDLER("AT+COPS?", atcmdecho_nosock),
 
 		/* SOCKET COMMAND ECHOES for last_socket_id processing */
 		CMD_HANDLER("AT+KTCPCFG=", atcmdecho),
@@ -1655,6 +1822,7 @@ static void hl7800_rx(void)
 		CMD_HANDLER("AT+KUDPSND=", atcmdecho),
 		CMD_HANDLER("AT+KTCPCLOSE=", atcmdecho),
 		CMD_HANDLER("AT+KUDPCLOSE=", atcmdecho),
+		CMD_HANDLER("AT+KTCPDEL=", atcmdecho),
 
 		/* MODEM Information */
 		CMD_HANDLER("AT+CGMI", atcmdinfo_manufacturer),
@@ -1662,7 +1830,9 @@ static void hl7800_rx(void)
 		CMD_HANDLER("ATI3", atcmdinfo_revision),
 		CMD_HANDLER("+CESQ: ", atcmdinfo_rssi),
 		CMD_HANDLER("AT+KGSN=3", atcmdinfo_serial_number),
-		CMD_HANDLER("+CGPADDR: ", atcmdinfo_ipaddr),
+		CMD_HANDLER("+CGCONTRDP: ", atcmdinfo_ipaddr),
+		CMD_HANDLER("AT+CGSN", atcmdinfo_imei),
+		CMD_HANDLER("+COPS: ", atcmdinfo_operator_status),
 
 		/* UNSOLICITED modem information */
 		/* mobile startup report */
@@ -1716,8 +1886,8 @@ static void hl7800_rx(void)
 				if (net_buf_ncmp(rx_buf, handlers[i].cmd,
 						 handlers[i].cmd_len) == 0) {
 					/* found a matching handler */
-					LOG_DBG("MATCH %s (len:%u)",
-						handlers[i].cmd, len);
+					/* LOG_DBG("MATCH %s (len:%u)",
+					 	handlers[i].cmd, len);*/
 
 					/* skip cmd_len */
 					rx_buf = net_buf_skip(
@@ -1731,6 +1901,8 @@ static void hl7800_rx(void)
 						break;
 					}
 
+					LOG_DBG("HANDLE %s (len:%u)",
+						handlers[i].cmd, len);
 					/* call handler */
 					if (handlers[i].func) {
 						handlers[i].func(&rx_buf, len);
@@ -1768,8 +1940,7 @@ static void hl7800_rx(void)
 				/* NOTE: may need to increase log_strdup buffers
 				*  if many unhandled commands happen in quick
 				*  succession */
-				//printk("\r\n UNHANDLED RX: %s\r\n", msg);
-				LOG_DBG("UNHANDLED RX: %s", log_strdup(msg));
+				LOG_WRN("UNHANDLED RX: %s", log_strdup(msg));
 			}
 #endif
 			if (frag && rx_buf) {
@@ -1857,19 +2028,12 @@ static int modem_reset(bool keepAwake)
 		allow_sleep(false);
 	}
 
-	// TODO: remove this because we dont need to delay if using DSR to determine module awake.
-	/* wait for the HL7800 Module to perform its initial boot correctly */
-	//k_sleep(MDM_BOOT_TIME);
-
-	// LOG_INF("... Done!");
-
 	return 0;
 }
 
 static int hl7800_modem_reset(void)
 {
 	int ret = 0;
-	// int counter = 0;
 
 	ictx.restarting = true;
 	/* bring down network interface */
@@ -1882,23 +2046,6 @@ static int hl7800_modem_reset(void)
 
 	modem_reset(true);
 
-	/* TODO: remove this */
-	// LOG_INF("Waiting for modem to respond");
-	// /* Give the modem a while to start responding to simple 'AT' commands. */
-	// ret = -1;
-	// while (counter++ < 50 && ret < 0) {
-	// 	k_sleep(K_SECONDS(2));
-	// 	ret = send_at_cmd(NULL, "AT", MDM_CMD_SEND_TIMEOUT, 0);
-	// 	if (ret < 0 && ret != -ETIMEDOUT) {
-	// 		break;
-	// 	}
-	// }
-
-	// if (ret < 0) {
-	// 	LOG_ERR("MODEM WAIT LOOP ERROR: %d", ret);
-	// 	goto error;
-	// }
-
 	k_sem_reset(&ictx.mdm_awake);
 	LOG_DBG("Waiting for modem to boot...");
 	ret = k_sem_take(&ictx.mdm_awake, MDM_BOOT_TIME);
@@ -1909,7 +2056,10 @@ static int hl7800_modem_reset(void)
 
 	LOG_DBG("Modem booted!");
 
-	/* turn on echo */
+	/* SETUP THE MODEM */
+	LOG_INF("Setting up modem");
+
+	/* turn on echo, echo is required for proper cmd processing */
 	ret = send_at_cmd(NULL, "ATE1", MDM_CMD_SEND_TIMEOUT,
 			  MDM_DEFAULT_AT_CMD_RETRIES);
 	if (ret < 0) {
@@ -1917,61 +2067,8 @@ static int hl7800_modem_reset(void)
 		goto error;
 	}
 
-	/* query modem info */
-	LOG_INF("Querying modem information");
-	/* modem manufacturer */
-	ret = send_at_cmd(NULL, "AT+CGMI", MDM_CMD_SEND_TIMEOUT,
-			  MDM_DEFAULT_AT_CMD_RETRIES);
-	if (ret < 0) {
-		LOG_ERR("AT+CGMI ret:%d", ret);
-		goto error;
-	}
-
-	/* modem model */
-	ret = send_at_cmd(NULL, "ATI0", MDM_CMD_SEND_TIMEOUT,
-			  MDM_DEFAULT_AT_CMD_RETRIES);
-	if (ret < 0) {
-		LOG_ERR("ATI0 ret:%d", ret);
-		goto error;
-	}
-
-	/* modem revision */
-	ret = send_at_cmd(NULL, "ATI3", MDM_CMD_SEND_TIMEOUT,
-			  MDM_DEFAULT_AT_CMD_RETRIES);
-	if (ret < 0) {
-		LOG_ERR("ATI3 ret:%d", ret);
-		goto error;
-	}
-
-	/* query modem IMEI */
-	ret = send_at_cmd(NULL, "AT+CGSN", MDM_CMD_SEND_TIMEOUT,
-			  MDM_DEFAULT_AT_CMD_RETRIES);
-	if (ret < 0) {
-		LOG_ERR("AT+CGSN ret:%d", ret);
-		goto error;
-	}
-
-	/* query modem serial number */
-	ret = send_at_cmd(NULL, "AT+KGSN=3", MDM_CMD_SEND_TIMEOUT,
-			  MDM_DEFAULT_AT_CMD_RETRIES);
-	if (ret < 0) {
-		LOG_ERR("AT+KGSN ret:%d", ret);
-		goto error;
-	}
-
-	/* SETUP THE MODEM */
-	LOG_INF("Setting up modem");
-
-	/* Turn on mobile start-up reporting */
-	ret = send_at_cmd(NULL, "AT+KSREP=1", MDM_CMD_SEND_TIMEOUT,
-			  MDM_DEFAULT_AT_CMD_RETRIES);
-	if (ret < 0) {
-		LOG_ERR("AT+KSREP ret:%d", ret);
-		goto error;
-	}
-
-	/* Turn on EPS network registration status reporting */
-	ret = send_at_cmd(NULL, "AT+CEREG=4", MDM_CMD_SEND_TIMEOUT,
+	/* Turn OFF EPS network registration status reporting, for now */
+	ret = send_at_cmd(NULL, "AT+CEREG=0", MDM_CMD_SEND_TIMEOUT,
 			  MDM_DEFAULT_AT_CMD_RETRIES);
 	if (ret < 0) {
 		LOG_ERR("AT+CEREG ret:%d", ret);
@@ -2041,6 +2138,74 @@ static int hl7800_modem_reset(void)
 		goto error;
 	}
 #endif
+
+	/* query modem info */
+	LOG_INF("Querying modem information");
+
+	/* modem manufacturer */
+	ret = send_at_cmd(NULL, "AT+CGMI", MDM_CMD_SEND_TIMEOUT,
+			  MDM_DEFAULT_AT_CMD_RETRIES);
+	if (ret < 0) {
+		LOG_ERR("AT+CGMI ret:%d", ret);
+		goto error;
+	}
+
+	/* modem model */
+	ret = send_at_cmd(NULL, "ATI0", MDM_CMD_SEND_TIMEOUT,
+			  MDM_DEFAULT_AT_CMD_RETRIES);
+	if (ret < 0) {
+		LOG_ERR("ATI0 ret:%d", ret);
+		goto error;
+	}
+
+	/* modem revision */
+	ret = send_at_cmd(NULL, "ATI3", MDM_CMD_SEND_TIMEOUT,
+			  MDM_DEFAULT_AT_CMD_RETRIES);
+	if (ret < 0) {
+		LOG_ERR("ATI3 ret:%d", ret);
+		goto error;
+	}
+
+	/* query modem IMEI */
+	ret = send_at_cmd(NULL, "AT+CGSN", MDM_CMD_SEND_TIMEOUT,
+			  MDM_DEFAULT_AT_CMD_RETRIES);
+	if (ret < 0) {
+		LOG_ERR("AT+CGSN ret:%d", ret);
+		goto error;
+	}
+
+	/* query modem serial number */
+	ret = send_at_cmd(NULL, "AT+KGSN=3", MDM_CMD_SEND_TIMEOUT,
+			  MDM_DEFAULT_AT_CMD_RETRIES);
+	if (ret < 0) {
+		LOG_ERR("AT+KGSN ret:%d", ret);
+		goto error;
+	}
+
+	/* Turn on mobile start-up reporting */
+	ret = send_at_cmd(NULL, "AT+KSREP=1", MDM_CMD_SEND_TIMEOUT,
+			  MDM_DEFAULT_AT_CMD_RETRIES);
+	if (ret < 0) {
+		LOG_ERR("AT+KSREP ret:%d", ret);
+		goto error;
+	}
+
+	/* Turn on EPS network registration status reporting */
+	ret = send_at_cmd(NULL, "AT+CEREG=4", MDM_CMD_SEND_TIMEOUT,
+			  MDM_DEFAULT_AT_CMD_RETRIES);
+	if (ret < 0) {
+		LOG_ERR("AT+CEREG ret:%d", ret);
+		goto error;
+	}
+
+	/* query the network status in case we already registered */
+	ret = send_at_cmd(NULL, "AT+CEREG?", MDM_CMD_SEND_TIMEOUT,
+			  MDM_DEFAULT_AT_CMD_RETRIES);
+	if (ret < 0) {
+		LOG_ERR("AT+CEREG? ret:%d", ret);
+		goto error;
+	}
+
 	LOG_INF("Modem ready!");
 error:
 	ictx.restarting = false;
@@ -2489,6 +2654,7 @@ static int hl7800_init(struct device *dev)
 		       WORKQ_PRIORITY);
 
 	k_work_init(&ictx.iface_status_work, iface_status_work_cb);
+	k_delayed_work_init(&ictx.dns_work, dns_work_cb);
 
 	ictx.last_socket_id = 0;
 
