@@ -184,6 +184,8 @@ NET_BUF_POOL_DEFINE(mdm_recv_pool, MDM_RECV_MAX_BUF, MDM_RECV_BUF_SIZE, 0,
 
 static u8_t mdm_recv_buf[MDM_MAX_DATA_LENGTH];
 
+K_MUTEX_DEFINE(hl7800_mutex);
+
 /* RX thread structures */
 K_THREAD_STACK_DEFINE(hl7800_rx_stack, CONFIG_MODEM_HL7800_RX_STACK_SIZE);
 struct k_thread hl7800_rx_thread;
@@ -338,6 +340,16 @@ static inline void _hexdump(const u8_t *packet, size_t length)
 #else
 #define _hexdump(...)
 #endif
+
+static void hl7800_lock(void)
+{
+	k_mutex_lock(&hl7800_mutex, K_FOREVER);
+}
+
+static void hl7800_unlock(void)
+{
+	k_mutex_unlock(&hl7800_mutex);
+}
 
 static struct hl7800_socket *socket_get(void)
 {
@@ -560,6 +572,8 @@ s32_t mdm_hl7800_send_at_cmd(const u8_t *data)
 		return -EINVAL;
 	}
 
+	hl7800_lock();
+
 #ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
 	bool goBackToSleep = ictx.allowSleep;
 	wakeup_hl7800();
@@ -571,6 +585,8 @@ s32_t mdm_hl7800_send_at_cmd(const u8_t *data)
 		allow_sleep(true);
 	}
 #endif
+	hl7800_unlock();
+
 	return ret;
 }
 
@@ -1118,7 +1134,7 @@ static void on_cmd_atcmdinfo_operator_status(struct net_buf **buf, u16_t len)
 
 	out_len = net_buf_linearize(value, sizeof(value), *buf, 0, len);
 	value[out_len] = 0;
-	LOG_DBG("Operator: %s", log_strdup(value));
+	LOG_INF("Operator: %s", log_strdup(value));
 
 	if (len == 1) {
 		/* only mode was returned, there is no operator info */
@@ -1211,12 +1227,14 @@ static void hl7800_rssi_query_work(struct k_work *work)
 {
 	int ret;
 
+	hl7800_lock();
 	/* query modem RSSI */
 	ret = send_at_cmd(NULL, "AT+CESQ", MDM_CMD_SEND_TIMEOUT,
 			  MDM_DEFAULT_AT_CMD_RETRIES);
 	if (ret < 0) {
 		LOG_ERR("AT+CESQ ret:%d", ret);
 	}
+	hl7800_unlock();
 
 	/* re-start RSSI query work */
 	k_delayed_work_submit_to_queue(&hl7800_workq, &ictx.rssi_query_work,
@@ -1226,6 +1244,8 @@ static void hl7800_rssi_query_work(struct k_work *work)
 static void iface_status_work_cb(struct k_work *work)
 {
 	int ret;
+
+	hl7800_lock();
 
 	/* bring iface up/down */
 	switch (ictx.networkState) {
@@ -1274,6 +1294,8 @@ static void iface_status_work_cb(struct k_work *work)
 			LOG_ERR("AT+CGCONTRDP ret:%d", ret);
 		}
 	}
+
+	hl7800_unlock();
 }
 
 /* Handler: +CEREG: <n>,<stat>[,[<lac>],[<ci>],[<AcT>]
@@ -1528,7 +1550,7 @@ static void on_cmd_sockread(struct net_buf **buf, u16_t len)
 	delim = strchr(value, ',');
 	if (!delim) {
 		LOG_ERR("Missing comma");
-		return;
+		goto done;
 	}
 
 	*delim++ = '\0';
@@ -1541,7 +1563,7 @@ static void on_cmd_sockread(struct net_buf **buf, u16_t len)
 	sock = socket_from_id(ictx.last_socket_id);
 	if (!sock) {
 		LOG_ERR("Socket not found! (%d)", ictx.last_socket_id);
-		return;
+		goto done;
 	}
 
 	/* receive 'CONNECT' */
@@ -1561,14 +1583,14 @@ static void on_cmd_sockread(struct net_buf **buf, u16_t len)
 	net_buf_skipcrlf(buf);
 	if (!*buf) {
 		LOG_ERR("No CONNECT start");
-		return;
+		goto done;
 	}
 
 	frag = NULL;
 	len = net_buf_findcrlf(*buf, &frag, &offset);
 	if (!frag) {
 		LOG_ERR("Unable to find CONNECT end");
-		return;
+		goto done;
 	}
 	char con[sizeof(CONNECT_STRING)];
 	out_len = net_buf_linearize(con, sizeof(con), *buf, 0, len);
@@ -1577,14 +1599,14 @@ static void on_cmd_sockread(struct net_buf **buf, u16_t len)
 	net_buf_pull(*buf, len);
 	if (strcmp(con, CONNECT_STRING)) {
 		LOG_ERR("Could not find CONNECT");
-		return;
+		goto done;
 	}
 
 	/* remove the \r\n after 'CONNECT' */
 	net_buf_skipcrlf(buf);
 	if (!*buf) {
 		LOG_ERR("No CONNECT end");
-		return;
+		goto done;
 	}
 
 	/* allocate an RX pkt */
@@ -1593,7 +1615,7 @@ static void on_cmd_sockread(struct net_buf **buf, u16_t len)
 		sock->ip_proto, BUF_ALLOC_TIMEOUT);
 	if (!sock->recv_pkt) {
 		LOG_ERR("Failed net_pkt_get_reserve_rx!");
-		return;
+		goto done;
 	}
 
 	/* set pkt data */
@@ -1610,7 +1632,7 @@ static void on_cmd_sockread(struct net_buf **buf, u16_t len)
 				i);
 			net_pkt_unref(sock->recv_pkt);
 			sock->recv_pkt = NULL;
-			return;
+			goto done;
 		}
 
 		/* pull data from buf and advance to the next frag if needed */
@@ -1642,6 +1664,8 @@ static void on_cmd_sockread(struct net_buf **buf, u16_t len)
 	* case the app takes a long time.
 	*/
 	k_work_submit_to_queue(&hl7800_workq, &sock->recv_cb_work);
+done:
+	hl7800_unlock();
 }
 
 /* Handler: +KTCP_DATA/+KUDP_DATA: <socket_id>,<left_bytes> */
@@ -1654,6 +1678,8 @@ static void on_cmd_sockdataind(struct net_buf **buf, u16_t len)
 	char sendbuf[sizeof("AT+KTCPRCV=##,####")];
 	struct hl7800_socket *sock = NULL;
 
+	hl7800_lock();
+
 	out_len = net_buf_linearize(value, sizeof(value) - 1, *buf, 0, len);
 	value[out_len] = 0;
 
@@ -1661,7 +1687,7 @@ static void on_cmd_sockdataind(struct net_buf **buf, u16_t len)
 	delim = strchr(value, ',');
 	if (!delim) {
 		LOG_ERR("Missing comma");
-		return;
+		goto error;
 	}
 
 	*delim++ = '\0';
@@ -1674,7 +1700,7 @@ static void on_cmd_sockdataind(struct net_buf **buf, u16_t len)
 	sock = socket_from_id(socket_id);
 	if (!sock) {
 		LOG_ERR("Unable to find socket_id:%d", socket_id);
-		return;
+		goto error;
 	}
 
 	if (left_bytes > 0) {
@@ -1696,7 +1722,12 @@ static void on_cmd_sockdataind(struct net_buf **buf, u16_t len)
 		* received, we trigger on_cmd_sockread() to handle it.
 		*/
 		send_at_cmd(sock, sendbuf, K_NO_WAIT, 0);
+		goto done;
 	}
+error:
+	hl7800_unlock();
+done:
+	return;
 }
 
 static int net_buf_ncmp(struct net_buf *buf, const u8_t *s2, size_t n)
@@ -2215,11 +2246,16 @@ error:
 s32_t mdm_hl7800_reset(void)
 {
 	int ret;
+
+	hl7800_lock();
+
 	ret = hl7800_modem_reset();
 	if (ret == 0) {
 		/* update the iface status after reset */
 		iface_status_work_cb(NULL);
 	}
+
+	hl7800_unlock();
 
 	return ret;
 }
@@ -2250,7 +2286,13 @@ static int hl7800_power_off(void)
 
 s32_t mdm_hl7800_power_off(void)
 {
-	return hl7800_power_off();
+	int rc;
+
+	hl7800_lock();
+	rc = hl7800_power_off();
+	hl7800_unlock();
+
+	return rc;
 }
 
 /*** OFFLOAD FUNCTIONS ***/
@@ -2262,10 +2304,12 @@ static int offload_get(sa_family_t family, enum net_sock_type type,
 	int ret = 0;
 	struct hl7800_socket *sock = NULL;
 
+	hl7800_lock();
 	/* new socket */
 	sock = socket_get();
 	if (!sock) {
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto done;
 	}
 
 	(*context)->offload_context = sock;
@@ -2301,7 +2345,8 @@ static int offload_get(sa_family_t family, enum net_sock_type type,
 			socket_put(sock);
 		}
 	}
-
+done:
+	hl7800_unlock();
 	return ret;
 }
 
@@ -2403,6 +2448,8 @@ static int offload_connect(struct net_context *context,
 		return -EINVAL;
 	}
 
+	hl7800_lock();
+
 	if (sock->type == SOCK_STREAM) {
 		/* Configure/create TCP connection */
 		if (!sock->created) {
@@ -2413,7 +2460,8 @@ static int offload_connect(struct net_context *context,
 					  0);
 			if (ret < 0) {
 				LOG_ERR("AT+KTCPCFG ret:%d", ret);
-				return -EIO;
+				ret = -EIO;
+				goto done;
 			}
 		}
 
@@ -2423,7 +2471,8 @@ static int offload_connect(struct net_context *context,
 		ret = send_at_cmd(sock, cmd_con, MDM_CMD_SEND_TIMEOUT, 0);
 		if (ret < 0) {
 			LOG_ERR("AT+KTCPCNX ret:%d", ret);
-			return -EIO;
+			ret = -EIO;
+			goto done;
 		}
 		/* Now wait for +KTCP_IND or +KTCP_NOTIF to ensure
 		*  the connection succeded or failed */
@@ -2435,15 +2484,18 @@ static int offload_connect(struct net_context *context,
 		}
 		if (ret < 0) {
 			LOG_ERR("+KTCP_IND/NOTIF ret:%d", ret);
+			goto done;
 		} else {
 			net_context_set_state(context, NET_CONTEXT_CONNECTED);
 		}
 	}
 
+done:
 	if (cb) {
 		cb(context, ret, user_data);
 	}
 
+	hl7800_unlock();
 	return ret;
 }
 
@@ -2492,6 +2544,8 @@ static int offload_sendto(struct net_pkt *pkt, const struct sockaddr *dst_addr,
 		return -EINVAL;
 	}
 
+	hl7800_lock();
+
 	ret = send_data(sock, pkt);
 	if (ret < 0) {
 		LOG_ERR("send_data error: %d", ret);
@@ -2501,6 +2555,7 @@ static int offload_sendto(struct net_pkt *pkt, const struct sockaddr *dst_addr,
 	if (cb) {
 		cb(context, ret, user_data);
 	}
+	hl7800_unlock();
 
 	return ret;
 }
@@ -2568,27 +2623,28 @@ static int offload_put(struct net_context *context)
 		return 0;
 	}
 
+	hl7800_lock();
+
 	/* close connection */
 	if (sock->type == SOCK_STREAM) {
 		snprintk(cmd1, sizeof(cmd1), "AT+KTCPCLOSE=%d",
 			 sock->socket_id);
+		snprintk(cmd2, sizeof(cmd2), "AT+KTCPDEL=%d", sock->socket_id);
 	} else {
 		snprintk(cmd1, sizeof(cmd1), "AT+KUDPCLOSE=%d",
 			 sock->socket_id);
+		snprintk(cmd2, sizeof(cmd2), "AT+KUDPDEL=%d", sock->socket_id);
 	}
 
 	ret = send_at_cmd(sock, cmd1, MDM_CMD_SEND_TIMEOUT, 0);
 	if (ret < 0) {
-		LOG_ERR("TCP/UDP CLOSE ret:%d", ret);
+		LOG_ERR("AT+K**PCLOSE ret:%d", ret);
 	}
 
-	if (sock->type == SOCK_STREAM) {
-		/* delete TCP session */
-		snprintk(cmd2, sizeof(cmd2), "AT+KTCPDEL=%d", sock->socket_id);
-		ret = send_at_cmd(sock, cmd2, MDM_CMD_SEND_TIMEOUT, 0);
-		if (ret < 0) {
-			LOG_ERR("AT+KTCPDEL ret:%d", ret);
-		}
+	/* delete session */
+	ret = send_at_cmd(sock, cmd2, MDM_CMD_SEND_TIMEOUT, 0);
+	if (ret < 0) {
+		LOG_ERR("AT+K**PDEL ret:%d", ret);
 	}
 
 	/* clear last_socket_id */
@@ -2599,6 +2655,7 @@ static int offload_put(struct net_context *context)
 	sock->context->send_cb = NULL;
 	socket_put(sock);
 	net_context_unref(context);
+	hl7800_unlock();
 
 	return 0;
 }
