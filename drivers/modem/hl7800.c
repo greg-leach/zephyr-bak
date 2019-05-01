@@ -50,6 +50,37 @@ enum sleep_state {
 	AWAKE,
 };
 
+enum tcp_notif {
+	TCP_NET_ERR,
+	TCP_NO_SOCKS,
+	TCP_MEM,
+	TCP_DNS,
+	TCP_DISCON,
+	TCP_CONN,
+	TCP_ERR,
+	TCP_CLIENT_REQ,
+	TCP_DATA_SND,
+	TCP_ID,
+	TCP_RUNNING,
+	TCP_ALL_USED,
+	TCP_TIMEOUT,
+	TCP_SSL_CONN,
+	TCP_SSL_INIT
+};
+
+enum udp_notif {
+	UDP_NET_ERR = 0,
+	UDP_NO_SOCKS = 1,
+	UDP_MEM = 2,
+	UDP_DNS = 3,
+	UDP_CONN = 5,
+	UDP_ERR = 6,
+	UDP_DATA_SND = 8, /* this matches TCP_DATA_SND */
+	UDP_ID = 9,
+	UDP_RUNNING = 10,
+	UDP_ALL_USED = 11
+};
+
 struct mdm_control_pinconfig {
 	char *dev_name;
 	u32_t pin;
@@ -144,12 +175,14 @@ static const struct mdm_control_pinconfig pinconfig[] = {
 
 #define MDM_CMD_SEND_TIMEOUT K_SECONDS(5)
 #define MDM_CMD_CONN_TIMEOUT_SECONDS 31
+#define MDM_IP_SEND_RX_TIMEOUT_SECONDS 60
 #define MDM_CMD_CONN_TIMEOUT K_SECONDS(MDM_CMD_CONN_TIMEOUT_SECONDS)
 
 #define MDM_MAX_DATA_LENGTH 1500
 
 #define MDM_RECV_MAX_BUF 30
 #define MDM_RECV_BUF_SIZE 128
+#define MDM_HANDLER_MATCH_MAX_LEN 100
 
 #define MDM_MAX_SOCKETS 10
 
@@ -174,6 +207,7 @@ static const struct mdm_control_pinconfig pinconfig[] = {
 
 #define MDM_WAIT_FOR_DATA_TIME K_MSEC(50)
 #define MDM_RESET_LOW_TIME K_MSEC(50)
+#define MDM_WAIT_FOR_DATA_RETRIES 3
 
 #define RSSI_TIMEOUT_SECS 30
 
@@ -284,7 +318,7 @@ struct cmd_handler {
 
 static struct hl7800_iface_ctx ictx;
 
-static void hl7800_read_rx(struct net_buf **buf);
+static size_t hl7800_read_rx(struct net_buf **buf);
 
 /*** Verbose Debugging Functions ***/
 #if defined(ENABLE_VERBOSE_MODEM_RECV_HEXDUMP)
@@ -515,7 +549,7 @@ static int send_at_cmd(struct hl7800_socket *sock, const u8_t *data,
 
 		LOG_DBG("OUT: [%s]", log_strdup(data));
 		mdm_receiver_send(&ictx.mdm_ctx, data, strlen(data));
-		mdm_receiver_send(&ictx.mdm_ctx, "\r\n", 2);
+		mdm_receiver_send(&ictx.mdm_ctx, "\r", 1);
 
 		if (timeout == K_NO_WAIT) {
 			return 0;
@@ -595,12 +629,14 @@ static int send_data(struct hl7800_socket *sock, struct net_pkt *pkt)
 	int ret, bufSize;
 	struct net_buf *frag;
 	char dstAddr[sizeof("###.###.###.###")];
+	size_t sendLen, actualSendLen;
+	sendLen = 0, actualSendLen = 0;
 
 	if (sock->type == SOCK_STREAM) {
-		bufSize = sizeof("AT+KTCPSND=##,####\r\n");
+		bufSize = sizeof("AT+KTCPSND=##,####");
 	} else {
-		bufSize = sizeof(
-			"AT+KUDPSND=##,\"###.###.###.###\",#####,####\r\n");
+		bufSize =
+			sizeof("AT+KUDPSND=##,\"###.###.###.###\",#####,####");
 	}
 
 	char buf[bufSize];
@@ -612,36 +648,45 @@ static int send_data(struct hl7800_socket *sock, struct net_pkt *pkt)
 	ictx.last_error = 0;
 
 	frag = pkt->frags;
-
+	sendLen = net_buf_frags_len(frag);
 	/* start sending data */
 	k_sem_reset(&sock->sock_send_sem);
 	if (sock->type == SOCK_STREAM) {
-		snprintk(buf, sizeof(buf), "AT+KTCPSND=%d,%u\r\n",
-			 sock->socket_id, net_buf_frags_len(frag));
+		snprintk(buf, sizeof(buf), "AT+KTCPSND=%d,%u", sock->socket_id,
+			 sendLen);
 	} else {
 		if (!net_addr_ntop(sock->family, &net_sin(&sock->dst)->sin_addr,
 				   dstAddr, sizeof(dstAddr))) {
 			LOG_ERR("Invalid dst addr");
 			return -EINVAL;
 		}
-		snprintk(buf, sizeof(buf), "AT+KUDPSND=%d,\"%s\",%u,%u\r\n",
+		snprintk(buf, sizeof(buf), "AT+KUDPSND=%d,\"%s\",%u,%u",
 			 sock->socket_id, dstAddr,
-			 net_sin(&sock->dst)->sin_port,
-			 net_buf_frags_len(frag));
+			 net_sin(&sock->dst)->sin_port, sendLen);
 	}
-	LOG_DBG("OUT: [%s]", log_strdup(buf));
-	mdm_receiver_send(&ictx.mdm_ctx, buf, strlen(buf));
+	send_at_cmd(sock, buf, K_NO_WAIT, 0);
 
-	/* wait for CONNECT */
-	ret = k_sem_take(&sock->sock_send_sem, MDM_CMD_SEND_TIMEOUT);
+	/* wait for CONNECT  or error */
+	ret = k_sem_take(&sock->sock_send_sem, MDM_IP_SEND_RX_TIMEOUT_SECONDS);
 	if (ret) {
 		LOG_ERR("Err waiting for CONNECT (%d)", ret);
+		goto done;
+	}
+	/* check for error */
+	if (ictx.last_error != 0) {
+		ret = ictx.last_error;
+		LOG_ERR("AT+K**PSND (%d)", ret);
+		goto done;
 	}
 
 	/* Loop through packet data and send */
 	while (frag) {
+		actualSendLen += frag->len;
 		mdm_receiver_send(&ictx.mdm_ctx, frag->data, frag->len);
 		frag = frag->frags;
+	}
+	if (actualSendLen != sendLen) {
+		LOG_WRN("AT+K**PSND act: %d exp: %d", actualSendLen, sendLen);
 	}
 
 	/* Send EOF pattern to terminate data */
@@ -653,7 +698,7 @@ static int send_data(struct hl7800_socket *sock, struct net_pkt *pkt)
 	} else if (ret == -EAGAIN) {
 		ret = -ETIMEDOUT;
 	}
-
+done:
 	return ret;
 }
 
@@ -695,31 +740,6 @@ static u16_t net_buf_findcrlf(struct net_buf *buf, struct net_buf **frag,
 	}
 
 	if (buf && is_crlf(*(buf->data + pos))) {
-		len += pos;
-		*offset = pos;
-		*frag = buf;
-		return len;
-	}
-
-	return 0;
-}
-
-static u16_t net_buf_findchar(struct net_buf *buf, char ch,
-			      struct net_buf **frag, u16_t *offset)
-{
-	u16_t len = 0U, pos = 0U;
-
-	while (buf && *(buf->data + pos) != ch) {
-		if (pos + 1 >= buf->len) {
-			len += buf->len;
-			buf = buf->frags;
-			pos = 0U;
-		} else {
-			pos++;
-		}
-	}
-
-	if (buf && *(buf->data + pos) == ch) {
 		len += pos;
 		*offset = pos;
 		*frag = buf;
@@ -822,6 +842,22 @@ static void on_cmd_atcmdecho_nosock(struct net_buf **buf, u16_t len)
 	ictx.last_socket_id = 0;
 }
 
+static void waitForModemData(struct net_buf **buf, u16_t currentLen,
+			     u16_t expectedLen)
+{
+	u16_t waitForDataTries;
+	waitForDataTries = 0;
+	while ((currentLen < expectedLen) &&
+	       (waitForDataTries < MDM_WAIT_FOR_DATA_RETRIES)) {
+		LOG_DBG("Waiting for data (len:%d)", currentLen);
+		/* wait for more data */
+		k_sleep(MDM_WAIT_FOR_DATA_TIME);
+		currentLen = hl7800_read_rx(buf);
+		waitForDataTries++;
+	}
+}
+
+/* Handler: AT+CGMI */
 static void on_cmd_atcmdinfo_manufacturer(struct net_buf **buf, u16_t len)
 {
 	struct net_buf *frag = NULL;
@@ -829,24 +865,21 @@ static void on_cmd_atcmdinfo_manufacturer(struct net_buf **buf, u16_t len)
 	size_t out_len;
 	int len_no_null = MDM_MANUFACTURER_LENGTH - 1;
 
-	/* make sure revision data is received */
-	if (len < MDM_MANUFACTURER_LENGTH) {
-		LOG_DBG("Waiting for data");
-		/* wait for more data */
-		k_sleep(MDM_WAIT_FOR_DATA_TIME);
-		hl7800_read_rx(buf);
-	}
+	/* make sure revision data is received
+	*  waiting for: \r\nSierra Wireless\r\n
+	*/
+	waitForModemData(buf, len, MDM_MANUFACTURER_LENGTH + 3);
 
 	net_buf_skipcrlf(buf);
 	if (!*buf) {
-		LOG_WRN("Unable to find mfg (net_buf_skipcrlf)");
+		LOG_ERR("Unable to find mfg start");
 		return;
 	}
 
 	frag = NULL;
 	len = net_buf_findcrlf(*buf, &frag, &offset);
 	if (!frag) {
-		LOG_WRN("Unable to find mfg (net_buf_findcrlf)");
+		LOG_ERR("Unable to find mfg end");
 		return;
 	}
 	if (len < len_no_null) {
@@ -863,6 +896,7 @@ static void on_cmd_atcmdinfo_manufacturer(struct net_buf **buf, u16_t len)
 	LOG_INF("Manufacturer: %s", ictx.mdm_manufacturer);
 }
 
+/* Handler: ATI0 */
 static void on_cmd_atcmdinfo_model(struct net_buf **buf, u16_t len)
 {
 	struct net_buf *frag = NULL;
@@ -870,24 +904,21 @@ static void on_cmd_atcmdinfo_model(struct net_buf **buf, u16_t len)
 	size_t out_len;
 	int len_no_null = MDM_MODEL_LENGTH - 1;
 
-	/* make sure revision data is received */
-	if (len < MDM_MODEL_LENGTH) {
-		LOG_DBG("Waiting for data");
-		/* wait for more data */
-		k_sleep(MDM_WAIT_FOR_DATA_TIME);
-		hl7800_read_rx(buf);
-	}
+	/* make sure model data is received
+	*  waiting for: \r\nHL7800\r\n
+	*/
+	waitForModemData(buf, len, MDM_MODEL_LENGTH + 3);
 
 	net_buf_skipcrlf(buf);
 	if (!*buf) {
-		LOG_WRN("Unable to find model (net_buf_skipcrlf)");
+		LOG_ERR("Unable to find model start");
 		return;
 	}
 
 	frag = NULL;
 	len = net_buf_findcrlf(*buf, &frag, &offset);
 	if (!frag) {
-		LOG_WRN("Unable to find model (net_buf_findcrlf)");
+		LOG_ERR("Unable to find model end");
 		return;
 	}
 	if (len < len_no_null) {
@@ -903,6 +934,7 @@ static void on_cmd_atcmdinfo_model(struct net_buf **buf, u16_t len)
 	LOG_INF("Model: %s", ictx.mdm_model);
 }
 
+/* Handler: ATI3 */
 static void on_cmd_atcmdinfo_revision(struct net_buf **buf, u16_t len)
 {
 	struct net_buf *frag = NULL;
@@ -910,24 +942,21 @@ static void on_cmd_atcmdinfo_revision(struct net_buf **buf, u16_t len)
 	size_t out_len;
 	int len_no_null = MDM_REVISION_LENGTH - 1;
 
-	/* make sure revision data is received */
-	if (len < MDM_REVISION_LENGTH) {
-		LOG_DBG("Waiting for data");
-		/* wait for more data */
-		k_sleep(MDM_WAIT_FOR_DATA_TIME);
-		hl7800_read_rx(buf);
-	}
+	/* make sure revision data is received
+	*  waiting for: \r\nAHL7800.1.2.3.1.20171211\r\n
+	*/
+	waitForModemData(buf, len, MDM_REVISION_LENGTH + 3);
 
 	net_buf_skipcrlf(buf);
 	if (!*buf) {
-		LOG_WRN("Unable to find rev (net_buf_skipcrlf)");
+		LOG_ERR("Unable to find rev start");
 		return;
 	}
 
 	frag = NULL;
 	len = net_buf_findcrlf(*buf, &frag, &offset);
 	if (!frag) {
-		LOG_WRN("Unable to find rev (net_buf_findcrlf)");
+		LOG_ERR("Unable to find rev end");
 		return;
 	}
 	if (len < len_no_null) {
@@ -943,6 +972,7 @@ static void on_cmd_atcmdinfo_revision(struct net_buf **buf, u16_t len)
 	LOG_INF("Revision: %s", ictx.mdm_revision);
 }
 
+/* Handler: AT+CGSN */
 static void on_cmd_atcmdinfo_imei(struct net_buf **buf, u16_t len)
 {
 	struct net_buf *frag = NULL;
@@ -950,24 +980,21 @@ static void on_cmd_atcmdinfo_imei(struct net_buf **buf, u16_t len)
 	size_t out_len;
 	int len_no_null = MDM_IMEI_LENGTH - 1;
 
-	/* make sure IMEI data is received */
-	if (len < MDM_IMEI_LENGTH) {
-		LOG_DBG("Waiting for data");
-		/* wait for more data */
-		k_sleep(MDM_WAIT_FOR_DATA_TIME);
-		hl7800_read_rx(buf);
-	}
+	/* make sure IMEI data is received
+	*  waiting for: \r\n###############\r\n
+	*/
+	waitForModemData(buf, len, MDM_IMEI_LENGTH + 3);
 
 	net_buf_skipcrlf(buf);
 	if (!*buf) {
-		LOG_WRN("Unable to find IMEI (net_buf_skipcrlf)");
+		LOG_ERR("Unable to find IMEI start");
 		return;
 	}
 
 	frag = NULL;
 	len = net_buf_findcrlf(*buf, &frag, &offset);
 	if (!frag) {
-		LOG_WRN("Unable to find IMEI (net_buf_findcrlf)");
+		LOG_ERR("Unable to find IMEI end");
 		return;
 	}
 	if (len < len_no_null) {
@@ -1166,52 +1193,56 @@ static void on_cmd_atcmdinfo_serial_number(struct net_buf **buf, u16_t len)
 	struct net_buf *frag = NULL;
 	u16_t offset;
 	size_t out_len;
-	int start, sn_len;
+	int sn_len;
 	int len_no_null = MDM_SN_LENGTH - 1;
+	char *valStart;
 
-	/* make sure SN# data is received */
-	if (len < MDM_SN_LENGTH) {
-		LOG_DBG("Waiting for data");
-		/* wait for more data */
-		k_sleep(MDM_WAIT_FOR_DATA_TIME);
-		hl7800_read_rx(buf);
-	}
+	/* make sure SN# data is received.
+	*  we are waiting for: \r\n+KGSN: ##############\r\n
+	*/
+	waitForModemData(buf, len, MDM_SN_LENGTH + 10);
 
 	net_buf_skipcrlf(buf);
 	if (!*buf) {
-		LOG_WRN("Unable to find sn (net_buf_skipcrlf)");
+		LOG_ERR("Unable to find sn start");
 		return;
 	}
-
-	frag = NULL;
-	start = net_buf_findchar(*buf, ':', &frag, &offset);
-	if (!frag) {
-		LOG_WRN("Unable to find sn (net_buf_findchar)");
-		return;
-	}
-	/* Remove ": " chars */
-	start += 2;
 
 	frag = NULL;
 	len = net_buf_findcrlf(*buf, &frag, &offset);
 	if (!frag) {
-		LOG_WRN("Unable to find sn (net_buf_findcrlf)");
+		LOG_ERR("Unable to find sn end");
 		return;
 	}
-	sn_len = len - start;
+
+	/* get msg data */
+	char value[len + 1];
+	out_len = net_buf_linearize(value, sizeof(value), *buf, 0, len);
+	value[out_len] = 0;
+
+	/* find ':' */
+	valStart = strchr(value, ':');
+	if (!valStart) {
+		LOG_ERR("Unable to find sn ':'");
+		return;
+	}
+	/* Remove ": " chars */
+	valStart += 2;
+
+	sn_len = len - (valStart - value);
 	if (sn_len < len_no_null) {
 		LOG_WRN("sn too short (len:%d)", sn_len);
 	} else if (sn_len > len_no_null) {
 		LOG_WRN("sn too long (len:%d)", sn_len);
-		len = MDM_SN_LENGTH;
+		sn_len = MDM_SN_LENGTH;
 	}
 
-	out_len = net_buf_linearize(ictx.mdm_sn, sizeof(ictx.mdm_sn) - 1, *buf,
-				    start, sn_len);
-	ictx.mdm_sn[out_len] = 0;
+	strncpy(ictx.mdm_sn, valStart, sn_len);
+	ictx.mdm_sn[sn_len] = 0;
 	LOG_INF("Serial #: %s", ictx.mdm_sn);
 }
 
+/* Handler: +KSUP: # */
 static void on_cmd_startup_report(struct net_buf **buf, u16_t len)
 {
 	size_t out_len;
@@ -1219,7 +1250,7 @@ static void on_cmd_startup_report(struct net_buf **buf, u16_t len)
 
 	out_len = net_buf_linearize(value, sizeof(value) - 1, *buf, 0, len);
 	value[out_len] = 0;
-	ictx.mdm_startup_state = strtol(value, NULL, 0);
+	ictx.mdm_startup_state = strtol(value, NULL, 10);
 	LOG_INF("Startup: %d", ictx.mdm_startup_state);
 }
 
@@ -1229,8 +1260,7 @@ static void hl7800_rssi_query_work(struct k_work *work)
 
 	hl7800_lock();
 	/* query modem RSSI */
-	ret = send_at_cmd(NULL, "AT+CESQ", MDM_CMD_SEND_TIMEOUT,
-			  MDM_DEFAULT_AT_CMD_RETRIES);
+	ret = send_at_cmd(NULL, "AT+CESQ", MDM_CMD_SEND_TIMEOUT, 1);
 	if (ret < 0) {
 		LOG_ERR("AT+CESQ ret:%d", ret);
 	}
@@ -1396,24 +1426,23 @@ static void on_cmd_sockok(struct net_buf **buf, u16_t len)
 static void on_cmd_sock_ind(struct net_buf **buf, u16_t len)
 {
 	struct hl7800_socket *sock = NULL;
-	struct net_buf *frag = NULL;
-	u16_t offset;
-	int pos;
-	char *id;
+	char *delim;
+	char value[len + 1];
+	size_t out_len;
 
 	ictx.last_error = 0;
 
-	pos = net_buf_findchar(*buf, ',', &frag, &offset);
-	if (frag) {
-		char val[pos + 1];
-		net_buf_linearize(val, sizeof(val), *buf, 0, pos);
-		id = val;
-	} else {
+	out_len = net_buf_linearize(value, sizeof(value), *buf, 0, len);
+	value[out_len] = 0;
+
+	/* find ',' because this is the format we expect */
+	delim = strchr(value, ',');
+	if (!delim) {
 		LOG_ERR("+K**P_IND could not find ','");
 		return;
 	}
 
-	ictx.last_socket_id = strtol(id, NULL, 0);
+	ictx.last_socket_id = strtol(value, NULL, 10);
 	sock = socket_from_id(ictx.last_socket_id);
 	if (sock) {
 		k_sem_give(&sock->sock_send_sem);
@@ -1432,7 +1461,6 @@ static void on_cmd_sockerror(struct net_buf **buf, u16_t len)
 	if (!sock) {
 		k_sem_give(&ictx.response_sem);
 	} else {
-		LOG_ERR("Socket error!");
 		k_sem_give(&sock->sock_send_sem);
 	}
 }
@@ -1441,37 +1469,54 @@ static void on_cmd_sockerror(struct net_buf **buf, u16_t len)
 static void on_cmd_sock_notif(struct net_buf **buf, u16_t len)
 {
 	struct hl7800_socket *sock = NULL;
-	struct net_buf *frag = NULL;
-	u16_t offset;
-	int pos;
-	char *id;
+	char *delim;
+	char value[len + 1];
+	size_t out_len;
+	u8_t notifVal;
+	bool err = false;
 
-	ictx.last_error = -EIO;
+	out_len = net_buf_linearize(value, sizeof(value), *buf, 0, len);
+	value[out_len] = 0;
 
-	pos = net_buf_findchar(*buf, ',', &frag, &offset);
-	if (frag) {
-		char val[pos + 1];
-		net_buf_linearize(val, sizeof(val), *buf, 0, pos);
-		id = val;
-	} else {
+	/* find ',' because this is the format we expect */
+	delim = strchr(value, ',');
+	if (!delim) {
 		LOG_ERR("+K**P_NOTIF could not find ','");
 		return;
 	}
 
-	ictx.last_socket_id = strtol(id, NULL, 0);
+	notifVal = strtol(delim + 1, NULL, 10);
+	LOG_WRN("+K**P_NOTIF: %d", notifVal);
+	switch (notifVal) {
+	case TCP_DATA_SND:
+		err = false;
+		ictx.last_error = 0;
+		break;
+
+	default:
+		err = true;
+		ictx.last_error = -EIO;
+		break;
+	}
+
+	ictx.last_socket_id = strtol(value, NULL, 10);
 	sock = socket_from_id(ictx.last_socket_id);
-	if (sock) {
-		/* Send NULL packet to callback to notify upper stack layers
+	if (err) {
+		if (sock) {
+			/* Send NULL packet to callback to notify upper stack layers
 		*  that the peer closed the connection or there was an error.
 		*  This is so an app will not get stuck in recv() forever.
 		*  Let's do the callback processing in a different work queue in
 		*  case the app takes a long time. sock->recv_pkt should
 		*  already be NULL at this point.
 		*/
-		k_work_submit_to_queue(&hl7800_workq, &sock->recv_cb_work);
-		k_sem_give(&sock->sock_send_sem);
-	} else {
-		LOG_ERR("Could not find socket id (%d)", ictx.last_socket_id);
+			k_work_submit_to_queue(&hl7800_workq,
+					       &sock->recv_cb_work);
+			k_sem_give(&sock->sock_send_sem);
+		} else {
+			LOG_ERR("Could not find socket id (%d)",
+				ictx.last_socket_id);
+		}
 	}
 }
 
@@ -1704,7 +1749,7 @@ static void on_cmd_sockdataind(struct net_buf **buf, u16_t len)
 	}
 
 	if (left_bytes > 0) {
-		LOG_DBG("socket_id:%d left_bytes:%d", socket_id, left_bytes);
+		LOG_DBG("socket_id:%d size:%d", socket_id, left_bytes);
 		if (sock->type == SOCK_DGRAM) {
 			snprintk(sendbuf, sizeof(sendbuf), "AT+KUDPRCV=%d,%u",
 				 sock->socket_id, left_bytes);
@@ -1730,63 +1775,18 @@ done:
 	return;
 }
 
-static int net_buf_ncmp(struct net_buf *buf, const u8_t *s2, size_t n)
-{
-	/* TODO: remove the commented items in this function.  Leave them for now for DEBUG purposes */
-	struct net_buf *frag = buf;
-	u16_t offset = 0U;
-	// bool flagMe = false;
-	int ret = 0;
-
-	// if (!strncmp(s2, "+KTCP_DATA: ", 12) &&
-	//     !strncmp(frag->data, "+KTCP_D", 7)) {
-	// 	flagMe = true;
-	// }
-
-	while (true) {
-		if ((n > 0) && (*(frag->data + offset) == *s2) &&
-		    (*s2 != '\0')) {
-			if (offset == frag->len) {
-				// if (flagMe) {
-				// 	flagMe = true;
-				// }
-				if (!frag->frags) {
-					break;
-				}
-				frag = frag->frags;
-				offset = 0U;
-			} else {
-				offset++;
-			}
-
-			s2++;
-			n--;
-		} /* else if (flagMe && n != 0) {
-			flagMe = true;
-			break;
-		}*/
-		else {
-			break;
-		}
-	}
-	ret = (n == 0) ? 0 : (*(frag->data + offset) - *s2);
-	// if (flagMe && ret != 0) {
-	// 	flagMe = false;
-	// }
-	return ret;
-}
-
 static inline struct net_buf *read_rx_allocator(s32_t timeout, void *user_data)
 {
 	return net_buf_alloc((struct net_buf_pool *)user_data, timeout);
 }
 
-static void hl7800_read_rx(struct net_buf **buf)
+static size_t hl7800_read_rx(struct net_buf **buf)
 {
 	u8_t uart_buffer[MDM_RECV_BUF_SIZE];
-	size_t bytes_read = 0;
+	size_t bytes_read, totalRead;
 	int ret;
 	u16_t rx_len;
+	bytes_read = 0, totalRead = 0;
 
 	/* read all of the data from mdm_receiver */
 	while (true) {
@@ -1817,7 +1817,10 @@ static void hl7800_read_rx(struct net_buf **buf)
 			LOG_ERR("Data was lost! read %u of %u!", rx_len,
 				bytes_read);
 		}
+		totalRead += bytes_read;
 	}
+
+	return totalRead;
 }
 
 /* RX thread */
@@ -1829,6 +1832,7 @@ static void hl7800_rx(void)
 	u16_t offset, len;
 	size_t out_len;
 	bool cmd_handled = false;
+	static char rx_msg[MDM_HANDLER_MATCH_MAX_LEN];
 
 	static const struct cmd_handler handlers[] = {
 		/* NON-SOCKET COMMAND ECHOES to clear last_socket_id */
@@ -1880,6 +1884,7 @@ static void hl7800_rx(void)
 		CMD_HANDLER("+KTCPCFG: ", sockcreate),
 		CMD_HANDLER("+KUDPCFG: ", sockcreate),
 		CMD_HANDLER(CONNECT_STRING, sockok),
+		CMD_HANDLER("NO CARRIER", sockerror),
 		CMD_HANDLER("AT+KTCPRCV=", sockread),
 		CMD_HANDLER("AT+KUDPRCV=", sockread),
 
@@ -1911,14 +1916,14 @@ static void hl7800_rx(void)
 				break;
 			}
 
+			out_len = net_buf_linearize(rx_msg, sizeof(rx_msg),
+						    rx_buf, 0, len);
 			/* look for matching data handlers */
 			i = -1;
 			for (i = 0; i < ARRAY_SIZE(handlers); i++) {
-				if (net_buf_ncmp(rx_buf, handlers[i].cmd,
-						 handlers[i].cmd_len) == 0) {
+				if (strncmp(rx_msg, handlers[i].cmd,
+					    handlers[i].cmd_len) == 0) {
 					/* found a matching handler */
-					/* LOG_DBG("MATCH %s (len:%u)",
-					 	handlers[i].cmd, len);*/
 
 					/* skip cmd_len */
 					rx_buf = net_buf_skip(
