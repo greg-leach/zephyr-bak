@@ -40,9 +40,11 @@ LOG_MODULE_REGISTER(LOG_DOMAIN);
 /* Uncomment the #define below to enable a hexdump of all incoming
  * data from the modem receiver
  */
-// #define ENABLE_VERBOSE_MODEM_RECV_HEXDUMP 1
+/* #define ENABLE_VERBOSE_MODEM_RECV_HEXDUMP 1 */
 
 #define LOG_UNHANDLED_RX_MSGS 1
+/* #define DEBUG_HL7800_RX_LOCK 1 */
+/* #define DEBUG_HL7800_TX_LOCK 1 */
 
 enum sleep_state {
 	ASLEEP,
@@ -174,9 +176,9 @@ static const struct mdm_control_pinconfig pinconfig[] = {
 #define MDM_SEND_OK_DISABLED 1
 
 #define MDM_CMD_SEND_TIMEOUT K_SECONDS(5)
-#define MDM_CMD_CONN_TIMEOUT_SECONDS 31
-#define MDM_IP_SEND_RX_TIMEOUT_SECONDS 60
-#define MDM_CMD_CONN_TIMEOUT K_SECONDS(MDM_CMD_CONN_TIMEOUT_SECONDS)
+#define MDM_IP_SEND_RX_TIMEOUT K_SECONDS(60)
+#define MDM_SOCK_NOTIF_DELAY K_MSEC(150)
+#define MDM_CMD_CONN_TIMEOUT K_SECONDS(31)
 
 #define MDM_MAX_DATA_LENGTH 1500
 
@@ -199,6 +201,7 @@ static const struct mdm_control_pinconfig pinconfig[] = {
 #define MDM_REVISION_LENGTH 25
 #define MDM_IMEI_LENGTH 16
 #define MDM_SN_LENGTH 15
+#define MDM_SN_RESPONSE_LENGTH MDM_SN_LENGTH + 10
 #define MDM_NETWORK_STATUS_LENGTH 45
 
 #define MDM_DEFAULT_AT_CMD_RETRIES 3
@@ -218,7 +221,8 @@ NET_BUF_POOL_DEFINE(mdm_recv_pool, MDM_RECV_MAX_BUF, MDM_RECV_BUF_SIZE, 0,
 
 static u8_t mdm_recv_buf[MDM_MAX_DATA_LENGTH];
 
-K_MUTEX_DEFINE(hl7800_mutex);
+static K_SEM_DEFINE(hl7800_RX_lock_sem, 1, 1);
+static K_SEM_DEFINE(hl7800_TX_lock_sem, 1, 1);
 
 /* RX thread structures */
 K_THREAD_STACK_DEFINE(hl7800_rx_stack, CONFIG_MODEM_HL7800_RX_STACK_SIZE);
@@ -233,6 +237,7 @@ static struct k_work_q hl7800_workq;
 
 static const char EOF_PATTERN[] = "--EOF--Pattern--";
 static const char CONNECT_STRING[] = "CONNECT";
+static const char OK_STRING[] = "OK";
 
 struct hl7800_socket {
 	struct net_context *context;
@@ -244,12 +249,17 @@ struct hl7800_socket {
 
 	bool created;
 	int socket_id;
+	int rx_size;
+	bool error;
+	int error_val;
 
 	/** semaphore */
 	struct k_sem sock_send_sem;
 
 	/** socket callbacks */
 	struct k_work recv_cb_work;
+	struct k_work rx_data_work;
+	struct k_delayed_work notif_work;
 	net_context_recv_cb_t recv_cb;
 	struct net_pkt *recv_pkt;
 	void *recv_user_data;
@@ -313,7 +323,7 @@ struct hl7800_iface_ctx {
 struct cmd_handler {
 	const char *cmd;
 	u16_t cmd_len;
-	void (*func)(struct net_buf **buf, u16_t len);
+	bool (*func)(struct net_buf **buf, u16_t len);
 };
 
 static struct hl7800_iface_ctx ictx;
@@ -375,14 +385,91 @@ static inline void _hexdump(const u8_t *packet, size_t length)
 #define _hexdump(...)
 #endif
 
+static int hl7800_RX_lock(void)
+{
+	int rc = 0;
+#ifdef DEBUG_HL7800_RX_LOCK
+	LOG_WRN("Locking RX [%p]...", k_current_get());
+#endif
+
+	if ((rc = k_sem_take(&hl7800_RX_lock_sem, K_FOREVER)) != 0) {
+		LOG_ERR("Unable to lock hl7800 (%d)", rc);
+	} else {
+#ifdef DEBUG_HL7800_RX_LOCK
+		LOG_WRN("Locked RX [%p]", k_current_get());
+#endif
+	}
+
+	return rc;
+}
+
+static void hl7800_RX_unlock(void)
+{
+#ifdef DEBUG_HL7800_RX_LOCK
+	LOG_WRN("UNLocking RX [%p]...", k_current_get());
+#endif
+	k_sem_give(&hl7800_RX_lock_sem);
+#ifdef DEBUG_HL7800_RX_LOCK
+	LOG_WRN("UNLocked RX [%p]", k_current_get());
+#endif
+}
+
+static bool hl7800_RX_locked(void)
+{
+	if (k_sem_count_get(&hl7800_RX_lock_sem) == 0) {
+		return true;
+	} else {
+		return false;
+	}
+}
+
+static int hl7800_TX_lock(void)
+{
+	int rc = 0;
+#ifdef DEBUG_HL7800_TX_LOCK
+	LOG_WRN("Locking TX [%p]...", k_current_get());
+#endif
+	if ((rc = k_sem_take(&hl7800_TX_lock_sem, K_FOREVER)) != 0) {
+		LOG_ERR("Unable to lock hl7800 (%d)", rc);
+	} else {
+#ifdef DEBUG_HL7800_TX_LOCK
+		LOG_WRN("Locked TX [%p]", k_current_get());
+#endif
+	}
+
+	return rc;
+}
+
+static void hl7800_TX_unlock(void)
+{
+#ifdef DEBUG_HL7800_TX_LOCK
+	LOG_WRN("UNLocking TX [%p]...", k_current_get());
+#endif
+	k_sem_give(&hl7800_TX_lock_sem);
+#ifdef DEBUG_HL7800_TX_LOCK
+	LOG_WRN("UNLocked TX [%p]", k_current_get());
+#endif
+}
+
+static bool hl7800_TX_locked(void)
+{
+	if (k_sem_count_get(&hl7800_TX_lock_sem) == 0) {
+		return true;
+	} else {
+		return false;
+	}
+}
+
 static void hl7800_lock(void)
 {
-	k_mutex_lock(&hl7800_mutex, K_FOREVER);
+	hl7800_TX_lock();
+	hl7800_RX_lock();
 }
 
 static void hl7800_unlock(void)
 {
-	k_mutex_unlock(&hl7800_mutex);
+	hl7800_RX_unlock();
+	hl7800_TX_unlock();
 }
 
 static struct hl7800_socket *socket_get(void)
@@ -428,6 +515,8 @@ static void socket_put(struct hl7800_socket *sock)
 	sock->context = NULL;
 	sock->socket_id = 0;
 	sock->created = false;
+	sock->error = false;
+	sock->error_val = -1;
 	(void)memset(&sock->src, 0, sizeof(struct sockaddr));
 	(void)memset(&sock->dst, 0, sizeof(struct sockaddr));
 }
@@ -620,7 +709,6 @@ s32_t mdm_hl7800_send_at_cmd(const u8_t *data)
 	}
 #endif
 	hl7800_unlock();
-
 	return ret;
 }
 
@@ -667,7 +755,7 @@ static int send_data(struct hl7800_socket *sock, struct net_pkt *pkt)
 	send_at_cmd(sock, buf, K_NO_WAIT, 0);
 
 	/* wait for CONNECT  or error */
-	ret = k_sem_take(&sock->sock_send_sem, MDM_IP_SEND_RX_TIMEOUT_SECONDS);
+	ret = k_sem_take(&sock->sock_send_sem, MDM_IP_SEND_RX_TIMEOUT);
 	if (ret) {
 		LOG_ERR("Err waiting for CONNECT (%d)", ret);
 		goto done;
@@ -688,6 +776,7 @@ static int send_data(struct hl7800_socket *sock, struct net_pkt *pkt)
 	if (actualSendLen != sendLen) {
 		LOG_WRN("AT+K**PSND act: %d exp: %d", actualSendLen, sendLen);
 	}
+	LOG_DBG("Sent %u bytes", actualSendLen);
 
 	/* Send EOF pattern to terminate data */
 	k_sem_reset(&sock->sock_send_sem);
@@ -747,6 +836,36 @@ static u16_t net_buf_findcrlf(struct net_buf *buf, struct net_buf **frag,
 	}
 
 	return 0;
+}
+
+static u8_t net_buf_get_u8(struct net_buf **buf)
+{
+	u8_t val;
+	val = net_buf_pull_u8(*buf);
+	if (!(*buf)->len) {
+		*buf = net_buf_frag_del(NULL, *buf);
+	}
+	return val;
+}
+
+static u32_t net_buf_remove(struct net_buf **buf, u32_t len)
+{
+	u32_t toRemove;
+	u32_t removed = 0;
+
+	while (*buf && len > 0) {
+		toRemove = (*buf)->len;
+		if (toRemove > len) {
+			toRemove = len;
+		}
+		net_buf_pull(*buf, toRemove);
+		removed += toRemove;
+		len -= toRemove;
+		if (!(*buf)->len) {
+			*buf = net_buf_frag_del(NULL, *buf);
+		}
+	}
+	return removed;
 }
 
 /*** UDP / TCP Helper Function ***/
@@ -824,28 +943,32 @@ static int pkt_setup_ip_data(struct net_pkt *pkt, struct hl7800_socket *sock)
 /*** MODEM RESPONSE HANDLERS ***/
 
 /* Last Socket ID Handler */
-static void on_cmd_atcmdecho(struct net_buf **buf, u16_t len)
+static bool on_cmd_atcmdecho(struct net_buf **buf, u16_t len)
 {
-	char value[3];
-	value[0] = net_buf_pull_u8(*buf);
-	/* If there is a double digit session ID */
-	if (len == 2) {
-		value[1] = net_buf_pull_u8(*buf);
-	}
+	size_t out_len;
+	char value[len + 1];
+
+	out_len = net_buf_linearize(value, sizeof(value), *buf, 0, len);
+	value[out_len] = 0;
+
 	ictx.last_socket_id = strtol(value, NULL, 0);
+
+	return true;
 }
 
 /* Echo Handler for commands without related sockets */
-static void on_cmd_atcmdecho_nosock(struct net_buf **buf, u16_t len)
+static bool on_cmd_atcmdecho_nosock(struct net_buf **buf, u16_t len)
 {
 	/* clear last_socket_id */
 	ictx.last_socket_id = 0;
+
+	return true;
 }
 
-static void waitForModemData(struct net_buf **buf, u16_t currentLen,
-			     u16_t expectedLen)
+static void waitForModemData(struct net_buf **buf, u32_t currentLen,
+			     u32_t expectedLen)
 {
-	u16_t waitForDataTries;
+	u32_t waitForDataTries;
 	waitForDataTries = 0;
 	while ((currentLen < expectedLen) &&
 	       (waitForDataTries < MDM_WAIT_FOR_DATA_RETRIES)) {
@@ -858,7 +981,7 @@ static void waitForModemData(struct net_buf **buf, u16_t currentLen,
 }
 
 /* Handler: AT+CGMI */
-static void on_cmd_atcmdinfo_manufacturer(struct net_buf **buf, u16_t len)
+static bool on_cmd_atcmdinfo_manufacturer(struct net_buf **buf, u16_t len)
 {
 	struct net_buf *frag = NULL;
 	u16_t offset;
@@ -868,19 +991,20 @@ static void on_cmd_atcmdinfo_manufacturer(struct net_buf **buf, u16_t len)
 	/* make sure revision data is received
 	*  waiting for: \r\nSierra Wireless\r\n
 	*/
-	waitForModemData(buf, len, MDM_MANUFACTURER_LENGTH + 3);
+	waitForModemData(buf, net_buf_frags_len(*buf),
+			 MDM_MANUFACTURER_LENGTH + 3);
 
 	net_buf_skipcrlf(buf);
 	if (!*buf) {
 		LOG_ERR("Unable to find mfg start");
-		return;
+		goto done;
 	}
 
 	frag = NULL;
 	len = net_buf_findcrlf(*buf, &frag, &offset);
 	if (!frag) {
 		LOG_ERR("Unable to find mfg end");
-		return;
+		goto done;
 	}
 	if (len < len_no_null) {
 		LOG_WRN("mfg too short (len:%d)", len);
@@ -894,10 +1018,12 @@ static void on_cmd_atcmdinfo_manufacturer(struct net_buf **buf, u16_t len)
 				    len);
 	ictx.mdm_manufacturer[out_len] = 0;
 	LOG_INF("Manufacturer: %s", ictx.mdm_manufacturer);
+done:
+	return true;
 }
 
 /* Handler: ATI0 */
-static void on_cmd_atcmdinfo_model(struct net_buf **buf, u16_t len)
+static bool on_cmd_atcmdinfo_model(struct net_buf **buf, u16_t len)
 {
 	struct net_buf *frag = NULL;
 	u16_t offset;
@@ -907,19 +1033,19 @@ static void on_cmd_atcmdinfo_model(struct net_buf **buf, u16_t len)
 	/* make sure model data is received
 	*  waiting for: \r\nHL7800\r\n
 	*/
-	waitForModemData(buf, len, MDM_MODEL_LENGTH + 3);
+	waitForModemData(buf, net_buf_frags_len(*buf), MDM_MODEL_LENGTH + 3);
 
 	net_buf_skipcrlf(buf);
 	if (!*buf) {
 		LOG_ERR("Unable to find model start");
-		return;
+		goto done;
 	}
 
 	frag = NULL;
 	len = net_buf_findcrlf(*buf, &frag, &offset);
 	if (!frag) {
 		LOG_ERR("Unable to find model end");
-		return;
+		goto done;
 	}
 	if (len < len_no_null) {
 		LOG_WRN("model too short (len:%d)", len);
@@ -932,10 +1058,12 @@ static void on_cmd_atcmdinfo_model(struct net_buf **buf, u16_t len)
 				    *buf, 0, len);
 	ictx.mdm_model[out_len] = 0;
 	LOG_INF("Model: %s", ictx.mdm_model);
+done:
+	return true;
 }
 
 /* Handler: ATI3 */
-static void on_cmd_atcmdinfo_revision(struct net_buf **buf, u16_t len)
+static bool on_cmd_atcmdinfo_revision(struct net_buf **buf, u16_t len)
 {
 	struct net_buf *frag = NULL;
 	u16_t offset;
@@ -945,19 +1073,19 @@ static void on_cmd_atcmdinfo_revision(struct net_buf **buf, u16_t len)
 	/* make sure revision data is received
 	*  waiting for: \r\nAHL7800.1.2.3.1.20171211\r\n
 	*/
-	waitForModemData(buf, len, MDM_REVISION_LENGTH + 3);
+	waitForModemData(buf, net_buf_frags_len(*buf), MDM_REVISION_LENGTH + 3);
 
 	net_buf_skipcrlf(buf);
 	if (!*buf) {
 		LOG_ERR("Unable to find rev start");
-		return;
+		goto done;
 	}
 
 	frag = NULL;
 	len = net_buf_findcrlf(*buf, &frag, &offset);
 	if (!frag) {
 		LOG_ERR("Unable to find rev end");
-		return;
+		goto done;
 	}
 	if (len < len_no_null) {
 		LOG_WRN("revision too short (len:%d)", len);
@@ -970,10 +1098,12 @@ static void on_cmd_atcmdinfo_revision(struct net_buf **buf, u16_t len)
 		ictx.mdm_revision, sizeof(ictx.mdm_revision) - 1, *buf, 0, len);
 	ictx.mdm_revision[out_len] = 0;
 	LOG_INF("Revision: %s", ictx.mdm_revision);
+done:
+	return true;
 }
 
 /* Handler: AT+CGSN */
-static void on_cmd_atcmdinfo_imei(struct net_buf **buf, u16_t len)
+static bool on_cmd_atcmdinfo_imei(struct net_buf **buf, u16_t len)
 {
 	struct net_buf *frag = NULL;
 	u16_t offset;
@@ -983,19 +1113,19 @@ static void on_cmd_atcmdinfo_imei(struct net_buf **buf, u16_t len)
 	/* make sure IMEI data is received
 	*  waiting for: \r\n###############\r\n
 	*/
-	waitForModemData(buf, len, MDM_IMEI_LENGTH + 3);
+	waitForModemData(buf, net_buf_frags_len(*buf), MDM_IMEI_LENGTH + 3);
 
 	net_buf_skipcrlf(buf);
 	if (!*buf) {
 		LOG_ERR("Unable to find IMEI start");
-		return;
+		goto done;
 	}
 
 	frag = NULL;
 	len = net_buf_findcrlf(*buf, &frag, &offset);
 	if (!frag) {
 		LOG_ERR("Unable to find IMEI end");
-		return;
+		goto done;
 	}
 	if (len < len_no_null) {
 		LOG_WRN("IMEI too short (len:%d)", len);
@@ -1009,6 +1139,8 @@ static void on_cmd_atcmdinfo_imei(struct net_buf **buf, u16_t len)
 	ictx.mdm_imei[out_len] = 0;
 
 	LOG_INF("IMEI: %s", ictx.mdm_imei);
+done:
+	return true;
 }
 
 static void dns_work_cb(struct k_work *work)
@@ -1029,7 +1161,7 @@ static void dns_work_cb(struct k_work *work)
 
 /* Handler: +CGCONTRDP: <cid>,<bearer_id>,<apn>,<local_addr and subnet_mask>,
 *			<gw_addr>,<DNS_prim_addr>,<DNS_sec_addr> */
-static void on_cmd_atcmdinfo_ipaddr(struct net_buf **buf, u16_t len)
+static bool on_cmd_atcmdinfo_ipaddr(struct net_buf **buf, u16_t len)
 {
 	int ret;
 	int numDelims = 7;
@@ -1049,7 +1181,7 @@ static void on_cmd_atcmdinfo_ipaddr(struct net_buf **buf, u16_t len)
 		if (!delims[i]) {
 			LOG_ERR("Could not find delim %d, val: %s", i,
 				log_strdup(value));
-			return;
+			return true;
 		}
 		/* Start next search after current delim location */
 		searchStart = delims[i] + 1;
@@ -1063,7 +1195,7 @@ static void on_cmd_atcmdinfo_ipaddr(struct net_buf **buf, u16_t len)
 		smStart = strchr(searchStart, '.');
 		if (!smStart) {
 			LOG_ERR("Could not find submask start");
-			return;
+			return true;
 		}
 		/* Start next search after current delim location */
 		searchStart = smStart + 1;
@@ -1077,7 +1209,7 @@ static void on_cmd_atcmdinfo_ipaddr(struct net_buf **buf, u16_t len)
 	ret = net_addr_pton(AF_INET, ipv4AddrStr, &newIpv4Addr);
 	if (ret < 0) {
 		LOG_ERR("Invalid IPv4 addr");
-		return;
+		return true;
 	}
 
 	/* move past the '.' */
@@ -1090,7 +1222,7 @@ static void on_cmd_atcmdinfo_ipaddr(struct net_buf **buf, u16_t len)
 	ret = net_addr_pton(AF_INET, smStr, &ictx.subnet);
 	if (ret < 0) {
 		LOG_ERR("Invalid subnet");
-		return;
+		return true;
 	}
 
 	/* store new gateway */
@@ -1102,7 +1234,7 @@ static void on_cmd_atcmdinfo_ipaddr(struct net_buf **buf, u16_t len)
 	ret = net_addr_pton(AF_INET, gwStr, &ictx.gateway);
 	if (ret < 0) {
 		LOG_ERR("Invalid gateway");
-		return;
+		return true;
 	}
 
 	/* store new dns */
@@ -1113,7 +1245,7 @@ static void on_cmd_atcmdinfo_ipaddr(struct net_buf **buf, u16_t len)
 	ret = net_addr_pton(AF_INET, ictx.dns_string, &ictx.dns);
 	if (ret < 0) {
 		LOG_ERR("Invalid dns");
-		return;
+		return true;
 	}
 
 	if (ictx.iface) {
@@ -1125,7 +1257,7 @@ static void on_cmd_atcmdinfo_ipaddr(struct net_buf **buf, u16_t len)
 		if (!net_if_ipv4_addr_add(ictx.iface, &newIpv4Addr,
 					  NET_ADDR_DHCP, 0)) {
 			LOG_ERR("Cannot set iface IPv4 addr");
-			return;
+			return true;
 		}
 
 		net_if_ipv4_set_netmask(ictx.iface, &ictx.subnet);
@@ -1148,10 +1280,11 @@ static void on_cmd_atcmdinfo_ipaddr(struct net_buf **buf, u16_t len)
 	}
 
 	/* TODO: IPv6 addr present, store it */
+	return true;
 }
 
 /* Handler: +COPS: <mode>[,<format>,<oper>[,<AcT>]] */
-static void on_cmd_atcmdinfo_operator_status(struct net_buf **buf, u16_t len)
+static bool on_cmd_atcmdinfo_operator_status(struct net_buf **buf, u16_t len)
 {
 	size_t out_len;
 	char value[len + 1];
@@ -1166,7 +1299,7 @@ static void on_cmd_atcmdinfo_operator_status(struct net_buf **buf, u16_t len)
 	if (len == 1) {
 		/* only mode was returned, there is no operator info */
 		ictx.operatorStatus = NO_OPERATOR;
-		return;
+		goto done;
 	}
 
 	searchStart = value;
@@ -1177,7 +1310,7 @@ static void on_cmd_atcmdinfo_operator_status(struct net_buf **buf, u16_t len)
 		if (!delims[i]) {
 			LOG_ERR("Could not find delim %d, val: %s", i,
 				log_strdup(value));
-			return;
+			goto done;
 		}
 		/* Start next search after current delim location */
 		searchStart = delims[i] + 1;
@@ -1185,12 +1318,15 @@ static void on_cmd_atcmdinfo_operator_status(struct net_buf **buf, u16_t len)
 
 	/* we found both delimiters, that means we have an operator */
 	ictx.operatorStatus = REGISTERED;
+done:
+	return true;
 }
 
 /* Handler: +KGSN: T5640400011101 */
-static void on_cmd_atcmdinfo_serial_number(struct net_buf **buf, u16_t len)
+static bool on_cmd_atcmdinfo_serial_number(struct net_buf **buf, u16_t len)
 {
 	struct net_buf *frag = NULL;
+	char value[MDM_SN_RESPONSE_LENGTH];
 	u16_t offset;
 	size_t out_len;
 	int sn_len;
@@ -1200,23 +1336,22 @@ static void on_cmd_atcmdinfo_serial_number(struct net_buf **buf, u16_t len)
 	/* make sure SN# data is received.
 	*  we are waiting for: \r\n+KGSN: ##############\r\n
 	*/
-	waitForModemData(buf, len, MDM_SN_LENGTH + 10);
+	waitForModemData(buf, net_buf_frags_len(*buf), MDM_SN_RESPONSE_LENGTH);
 
 	net_buf_skipcrlf(buf);
 	if (!*buf) {
 		LOG_ERR("Unable to find sn start");
-		return;
+		goto done;
 	}
 
 	frag = NULL;
 	len = net_buf_findcrlf(*buf, &frag, &offset);
 	if (!frag) {
 		LOG_ERR("Unable to find sn end");
-		return;
+		goto done;
 	}
 
 	/* get msg data */
-	char value[len + 1];
 	out_len = net_buf_linearize(value, sizeof(value), *buf, 0, len);
 	value[out_len] = 0;
 
@@ -1224,7 +1359,7 @@ static void on_cmd_atcmdinfo_serial_number(struct net_buf **buf, u16_t len)
 	valStart = strchr(value, ':');
 	if (!valStart) {
 		LOG_ERR("Unable to find sn ':'");
-		return;
+		goto done;
 	}
 	/* Remove ": " chars */
 	valStart += 2;
@@ -1240,30 +1375,50 @@ static void on_cmd_atcmdinfo_serial_number(struct net_buf **buf, u16_t len)
 	strncpy(ictx.mdm_sn, valStart, sn_len);
 	ictx.mdm_sn[sn_len] = 0;
 	LOG_INF("Serial #: %s", ictx.mdm_sn);
+done:
+	return true;
 }
 
 /* Handler: +KSUP: # */
-static void on_cmd_startup_report(struct net_buf **buf, u16_t len)
+static bool on_cmd_startup_report(struct net_buf **buf, u16_t len)
 {
 	size_t out_len;
-	char value[2];
+	char value[len + 1];
 
 	out_len = net_buf_linearize(value, sizeof(value) - 1, *buf, 0, len);
 	value[out_len] = 0;
 	ictx.mdm_startup_state = strtol(value, NULL, 10);
 	LOG_INF("Startup: %d", ictx.mdm_startup_state);
+
+	return true;
 }
 
-static void hl7800_rssi_query_work(struct k_work *work)
+static int hl7800_query_rssi(void)
 {
 	int ret;
-
-	hl7800_lock();
-	/* query modem RSSI */
 	ret = send_at_cmd(NULL, "AT+CESQ", MDM_CMD_SEND_TIMEOUT, 1);
 	if (ret < 0) {
 		LOG_ERR("AT+CESQ ret:%d", ret);
 	}
+	return ret;
+}
+
+static void hl7800_start_rssi_work(void)
+{
+	k_delayed_work_submit_to_queue(&hl7800_workq, &ictx.rssi_query_work,
+				       K_SECONDS(RSSI_TIMEOUT_SECS));
+}
+
+static void hl7800_stop_rssi_work(void)
+{
+	k_delayed_work_cancel(&ictx.rssi_query_work);
+}
+
+static void hl7800_rssi_query_work(struct k_work *work)
+{
+	hl7800_lock();
+	/* query modem RSSI */
+	hl7800_query_rssi();
 	hl7800_unlock();
 
 	/* re-start RSSI query work */
@@ -1276,7 +1431,7 @@ static void iface_status_work_cb(struct k_work *work)
 	int ret;
 
 	hl7800_lock();
-
+	LOG_DBG("Updating network state...");
 	/* bring iface up/down */
 	switch (ictx.networkState) {
 	case HOME_NETWORK:
@@ -1307,7 +1462,7 @@ static void iface_status_work_cb(struct k_work *work)
 		}
 #ifndef CONFIG_MODEM_HL7800_LOW_POWER_MODE
 		/* stop periodic RSSI reading */
-		k_delayed_work_cancel(&ictx.rssi_query_work);
+		hl7800_stop_rssi_work();
 #endif
 		break;
 	}
@@ -1316,7 +1471,8 @@ static void iface_status_work_cb(struct k_work *work)
 	if (ictx.iface && net_if_is_up(ictx.iface)) {
 #ifndef CONFIG_MODEM_HL7800_LOW_POWER_MODE
 		/* start periodic RSSI reading */
-		hl7800_rssi_query_work(NULL);
+		hl7800_query_rssi();
+		hl7800_start_rssi_work();
 #endif
 		ret = send_at_cmd(NULL, "AT+CGCONTRDP=1", MDM_CMD_SEND_TIMEOUT,
 				  0);
@@ -1324,13 +1480,13 @@ static void iface_status_work_cb(struct k_work *work)
 			LOG_ERR("AT+CGCONTRDP ret:%d", ret);
 		}
 	}
-
+	LOG_DBG("Network state updated");
 	hl7800_unlock();
 }
 
 /* Handler: +CEREG: <n>,<stat>[,[<lac>],[<ci>],[<AcT>]
 *  [,[<cause_type>],[<reject_cause>] [,[<Active-Time>],[<Periodic-TAU>]]]] */
-static void on_cmd_network_report(struct net_buf **buf, u16_t len)
+static bool on_cmd_network_report(struct net_buf **buf, u16_t len)
 {
 	size_t out_len;
 
@@ -1355,6 +1511,8 @@ static void on_cmd_network_report(struct net_buf **buf, u16_t len)
 		/* start work to adjust iface */
 		k_work_submit_to_queue(&hl7800_workq, &ictx.iface_status_work);
 	}
+
+	return true;
 }
 
 static int convert_rsrp_to_dbm(int rsrp)
@@ -1367,49 +1525,40 @@ static int convert_rsrp_to_dbm(int rsrp)
 }
 
 /* Handler: +CESQ: 99,99,255,255,32,31 */
-static void on_cmd_atcmdinfo_rssi(struct net_buf **buf, u16_t len)
+static bool on_cmd_atcmdinfo_rssi(struct net_buf **buf, u16_t len)
 {
-	int start = 0, i = 0;
-	size_t value_size;
-	char value[32];
+	/* number of ',' delimiters in this response */
+	int numDelims = 5;
+	char *delims[numDelims];
+	size_t out_len;
+	char value[len + 1];
+	char *searchStart;
 
-	value_size = sizeof(value);
-	(void)memset(value, 0, value_size);
-	while (*buf && len > 0 && i < value_size) {
-		value[i] = net_buf_pull_u8(*buf);
-		if (!(*buf)->len) {
-			*buf = net_buf_frag_del(NULL, *buf);
+	out_len = net_buf_linearize(value, sizeof(value), *buf, 0, len);
+	value[out_len] = 0;
+	searchStart = value;
+
+	/* find all delimiters */
+	for (int i = 0; i < numDelims; i++) {
+		delims[i] = strchr(searchStart, ',');
+		if (!delims[i]) {
+			LOG_ERR("Could not find delim %d, val: %s", i,
+				log_strdup(value));
+			goto done;
 		}
-
-		/* 5th "," marks the beginning of the rsrp value */
-		if (start < 5) {
-			if (value[i] == ',') {
-				start++;
-			}
-
-			continue;
-		}
-
-		/* '\r' marks the end of the RSSI value */
-		if (value[i] == '\r') {
-			value[i] = '\0';
-			break;
-		}
-
-		i++;
+		/* Start next search after current delim location */
+		searchStart = delims[i] + 1;
 	}
-
-	if (i > 0) {
-		ictx.mdm_ctx.data_rssi =
-			convert_rsrp_to_dbm(strtol(value, NULL, 0));
-		LOG_INF("RSSI: %d", ictx.mdm_ctx.data_rssi);
-	} else {
-		LOG_WRN("Bad format found for RSSI");
-	}
+	/* the 5th ',' (last in the msg) is the start of the rssi */
+	ictx.mdm_ctx.data_rssi =
+		convert_rsrp_to_dbm(strtol(delims[4] + 1, NULL, 10));
+	LOG_INF("RSSI: %d", ictx.mdm_ctx.data_rssi);
+done:
+	return true;
 }
 
 /* Handler: OK */
-static void on_cmd_sockok(struct net_buf **buf, u16_t len)
+static bool on_cmd_sockok(struct net_buf **buf, u16_t len)
 {
 	struct hl7800_socket *sock = NULL;
 
@@ -1420,10 +1569,11 @@ static void on_cmd_sockok(struct net_buf **buf, u16_t len)
 	} else {
 		k_sem_give(&sock->sock_send_sem);
 	}
+	return true;
 }
 
 /* Handler: +KTCP_IND/+KUDP_IND */
-static void on_cmd_sock_ind(struct net_buf **buf, u16_t len)
+static bool on_cmd_sock_ind(struct net_buf **buf, u16_t len)
 {
 	struct hl7800_socket *sock = NULL;
 	char *delim;
@@ -1439,7 +1589,7 @@ static void on_cmd_sock_ind(struct net_buf **buf, u16_t len)
 	delim = strchr(value, ',');
 	if (!delim) {
 		LOG_ERR("+K**P_IND could not find ','");
-		return;
+		goto done;
 	}
 
 	ictx.last_socket_id = strtol(value, NULL, 10);
@@ -1449,10 +1599,13 @@ static void on_cmd_sock_ind(struct net_buf **buf, u16_t len)
 	} else {
 		LOG_ERR("Could not find socket id (%d)", ictx.last_socket_id);
 	}
+
+done:
+	return true;
 }
 
 /* Handler: ERROR */
-static void on_cmd_sockerror(struct net_buf **buf, u16_t len)
+static bool on_cmd_sockerror(struct net_buf **buf, u16_t len)
 {
 	struct hl7800_socket *sock = NULL;
 
@@ -1463,10 +1616,39 @@ static void on_cmd_sockerror(struct net_buf **buf, u16_t len)
 	} else {
 		k_sem_give(&sock->sock_send_sem);
 	}
+
+	return true;
+}
+
+static void sock_notif_cb_work(struct k_work *work)
+{
+	struct hl7800_socket *sock = NULL;
+
+	sock = CONTAINER_OF(work, struct hl7800_socket, notif_work);
+
+	if (!sock) {
+		LOG_ERR("sock_notif_cb_work: Socket not found");
+		return;
+	}
+	/* lock */
+	hl7800_lock();
+	/* send null packet */
+	if (sock->recv_pkt != NULL) {
+		/* we are in the middle of RX,
+		requeue this and try again */
+		k_delayed_work_submit_to_queue(&hl7800_workq, &sock->notif_work,
+					       MDM_SOCK_NOTIF_DELAY);
+	} else {
+		LOG_DBG("Sock %d trigger NULL packet", sock->socket_id);
+		k_work_submit_to_queue(&hl7800_workq, &sock->recv_cb_work);
+		sock->error = false;
+	}
+	/* Unlock */
+	hl7800_unlock();
 }
 
 /* Handler: +KTCP_NOTIF/+KUDP_NOTIF */
-static void on_cmd_sock_notif(struct net_buf **buf, u16_t len)
+static bool on_cmd_sock_notif(struct net_buf **buf, u16_t len)
 {
 	struct hl7800_socket *sock = NULL;
 	char *delim;
@@ -1482,11 +1664,10 @@ static void on_cmd_sock_notif(struct net_buf **buf, u16_t len)
 	delim = strchr(value, ',');
 	if (!delim) {
 		LOG_ERR("+K**P_NOTIF could not find ','");
-		return;
+		goto done;
 	}
 
 	notifVal = strtol(delim + 1, NULL, 10);
-	LOG_WRN("+K**P_NOTIF: %d", notifVal);
 	switch (notifVal) {
 	case TCP_DATA_SND:
 		err = false;
@@ -1500,54 +1681,60 @@ static void on_cmd_sock_notif(struct net_buf **buf, u16_t len)
 	}
 
 	ictx.last_socket_id = strtol(value, NULL, 10);
+	LOG_WRN("+K**P_NOTIF: %d,%d", ictx.last_socket_id, notifVal);
+
 	sock = socket_from_id(ictx.last_socket_id);
 	if (err) {
 		if (sock) {
 			/* Send NULL packet to callback to notify upper stack layers
-		*  that the peer closed the connection or there was an error.
-		*  This is so an app will not get stuck in recv() forever.
-		*  Let's do the callback processing in a different work queue in
-		*  case the app takes a long time. sock->recv_pkt should
-		*  already be NULL at this point.
-		*/
-			k_work_submit_to_queue(&hl7800_workq,
-					       &sock->recv_cb_work);
+			*  that the peer closed the connection or there was an error.
+			*  This is so an app will not get stuck in recv() forever.
+			*  Let's do the callback processing in a different work queue in
+			*  case the app takes a long time. sock->recv_pkt should
+			*  already be NULL at this point.
+			*/
+			sock->error = true;
+			sock->error_val = notifVal;
+			k_delayed_work_submit_to_queue(&hl7800_workq,
+						       &sock->notif_work,
+						       MDM_SOCK_NOTIF_DELAY);
 			k_sem_give(&sock->sock_send_sem);
 		} else {
 			LOG_ERR("Could not find socket id (%d)",
 				ictx.last_socket_id);
 		}
 	}
+done:
+	return true;
 }
 
 /* Handler: +KTCPCFG/+KUDPCFG: <session_id> */
-static void on_cmd_sockcreate(struct net_buf **buf, u16_t len)
+static bool on_cmd_sockcreate(struct net_buf **buf, u16_t len)
 {
-	char value[3];
+	size_t out_len;
+	char value[len + 1];
 	struct hl7800_socket *sock = NULL;
 
-	value[0] = net_buf_pull_u8(*buf);
-	/* If there is a double digit session ID */
-	if (len == 2) {
-		value[1] = net_buf_pull_u8(*buf);
-	}
-	ictx.last_socket_id = strtol(value, NULL, 0);
+	out_len = net_buf_linearize(value, sizeof(value), *buf, 0, len);
+	value[out_len] = 0;
+	ictx.last_socket_id = strtol(value, NULL, 10);
 
 	/* check if the socket has been created already */
-
 	sock = socket_from_id(ictx.last_socket_id);
 	if (!sock) {
 		/* look up new socket by special id */
 		sock = socket_from_id(MDM_MAX_SOCKETS + 1);
 		if (!sock) {
 			LOG_ERR("No matching socket");
-			return;
+			goto done;
 		}
 	}
 
 	sock->socket_id = ictx.last_socket_id;
 	sock->created = true;
 	/* don't give back semaphore -- OK to follow */
+done:
+	return true;
 }
 
 static void sockreadrecv_cb_work(struct k_work *work)
@@ -1556,12 +1743,11 @@ static void sockreadrecv_cb_work(struct k_work *work)
 	struct net_pkt *pkt;
 
 	sock = CONTAINER_OF(work, struct hl7800_socket, recv_cb_work);
-
 	if (!sock) {
 		LOG_ERR("Sock not found");
 		return;
 	}
-
+	LOG_DBG("Sock %d RX CB", sock->socket_id);
 	/* return data */
 	pkt = sock->recv_pkt;
 	sock->recv_pkt = NULL;
@@ -1574,22 +1760,25 @@ static void sockreadrecv_cb_work(struct k_work *work)
 }
 
 /* Handler: +KTCPRCV/+KUDPRCV: <socket_id>,<num_bytes> */
-static void on_cmd_sockread(struct net_buf **buf, u16_t len)
+static bool on_cmd_sockread(struct net_buf **buf, u16_t len)
 {
 	struct hl7800_socket *sock = NULL;
 	struct net_buf *frag;
 	u8_t c = 0U;
 	char *delim;
-	int i, num_bytes, socket_id, hdr_len, connectWait = 0;
+	int i, num_bytes, socket_id, hdr_len, connectWait, connectWaitTimeout;
 	char value[sizeof("##,####")];
-	size_t value_size, out_len;
+	char okResp[sizeof(OK_STRING)];
+	char eof[sizeof(EOF_PATTERN)];
+	char conStr[sizeof(CONNECT_STRING)];
+	size_t out_len;
 	u16_t offset;
+	connectWait = 0;
 
-	value_size = sizeof(value);
-	out_len = net_buf_linearize(value, sizeof(value) - 1, *buf, 0, len);
+	out_len = net_buf_linearize(value, sizeof(value), *buf, 0, len);
 	value[out_len] = 0;
 	/* remove the message from the buffer */
-	net_buf_pull(*buf, len);
+	net_buf_remove(buf, len);
 
 	/* First comma separator marks the end of socket_id */
 	delim = strchr(value, ',');
@@ -1611,19 +1800,35 @@ static void on_cmd_sockread(struct net_buf **buf, u16_t len)
 		goto done;
 	}
 
+	if (sock->error) {
+		/* cancel notif work and restart */
+		k_delayed_work_cancel(&sock->notif_work);
+		k_delayed_work_submit_to_queue(&hl7800_workq, &sock->notif_work,
+					       MDM_SOCK_NOTIF_DELAY);
+	}
+
+	LOG_DBG("Socket %d RX %u bytes", socket_id, num_bytes);
+
 	/* receive 'CONNECT' */
 	/* remove ending \r\n from last message */
 	net_buf_skipcrlf(buf);
+	connectWaitTimeout = MDM_IP_SEND_RX_TIMEOUT / MDM_WAIT_FOR_DATA_TIME;
 	if (!*buf) {
 		/* No data left in buffer, get more data */
 		do {
-			k_sleep(MDM_WAIT_FOR_DATA_TIME);
-			hl7800_read_rx(buf);
-			LOG_DBG("Waiting for CONNECT");
+			if (hl7800_read_rx(buf) < strlen(CONNECT_STRING)) {
+				if (connectWait == 0) {
+					LOG_DBG("Waiting for CONNECT...");
+				}
+				k_sleep(MDM_WAIT_FOR_DATA_TIME);
+			}
 			connectWait++;
-		} while ((!*buf || (*buf)->len < strlen(CONNECT_STRING)) &&
-			 connectWait < 5);
+		} while ((!*buf ||
+			  (net_buf_frags_len(*buf) < strlen(CONNECT_STRING))) &&
+			 connectWait < connectWaitTimeout);
 	}
+
+	LOG_DBG("Processing RX...");
 	/* got CONNECT, remove leading \r\n */
 	net_buf_skipcrlf(buf);
 	if (!*buf) {
@@ -1637,12 +1842,11 @@ static void on_cmd_sockread(struct net_buf **buf, u16_t len)
 		LOG_ERR("Unable to find CONNECT end");
 		goto done;
 	}
-	char con[sizeof(CONNECT_STRING)];
-	out_len = net_buf_linearize(con, sizeof(con), *buf, 0, len);
-	con[out_len] = 0;
+	out_len = net_buf_linearize(conStr, sizeof(conStr), *buf, 0, len);
+	conStr[out_len] = 0;
 	/* remove the message from the buffer */
-	net_buf_pull(*buf, len);
-	if (strcmp(con, CONNECT_STRING)) {
+	net_buf_remove(buf, len);
+	if (strcmp(conStr, CONNECT_STRING)) {
 		LOG_ERR("Could not find CONNECT");
 		goto done;
 	}
@@ -1671,19 +1875,13 @@ static void on_cmd_sockread(struct net_buf **buf, u16_t len)
 
 	/* receive data */
 	for (i = 0; i < num_bytes; i++) {
-		c = *(*buf)->data;
+		/* pull data from buf and advance to the next frag if needed */
+		c = net_buf_get_u8(buf);
+		/* write data to packet */
 		if (net_pkt_write_u8(sock->recv_pkt, c)) {
 			LOG_ERR("Unable to add data! Aborting! Bytes RXd:%d",
 				i);
-			net_pkt_unref(sock->recv_pkt);
-			sock->recv_pkt = NULL;
-			goto done;
-		}
-
-		/* pull data from buf and advance to the next frag if needed */
-		net_buf_pull_u8(*buf);
-		if (!(*buf)->len) {
-			*buf = net_buf_frag_del(NULL, *buf);
+			goto rx_err;
 		}
 
 		if (!*buf && i < num_bytes) {
@@ -1698,6 +1896,47 @@ static void on_cmd_sockread(struct net_buf **buf, u16_t len)
 		}
 	}
 
+	if (!*buf || (net_buf_frags_len(*buf) < strlen(EOF_PATTERN))) {
+		LOG_ERR("No EOF present");
+		goto rx_err;
+	}
+
+	out_len = net_buf_linearize(eof, sizeof(eof), *buf, 0,
+				    strlen(EOF_PATTERN));
+	eof[out_len] = 0;
+	/* remove EOF pattern from buffer */
+	net_buf_remove(buf, strlen(EOF_PATTERN));
+	if (strcmp(eof, EOF_PATTERN)) {
+		LOG_ERR("Could not find EOF: %17x", *eof);
+		goto rx_err;
+	}
+
+	frag = NULL;
+	len = net_buf_findcrlf(*buf, &frag, &offset);
+	if (!frag) {
+		LOG_ERR("Unable to find OK start");
+		goto rx_err;
+	}
+	/* remove \r\n before OK */
+	net_buf_skipcrlf(buf);
+
+	if (!*buf || (net_buf_frags_len(*buf) < strlen(OK_STRING))) {
+		LOG_ERR("No OK present");
+		goto rx_err;
+	}
+	out_len = net_buf_linearize(okResp, sizeof(okResp), *buf, 0,
+				    strlen(OK_STRING));
+	okResp[out_len] = 0;
+	/* remove the message from the buffer */
+	net_buf_remove(buf, strlen(OK_STRING));
+	if (strcmp(okResp, OK_STRING)) {
+		LOG_ERR("Could not find OK: %2x", *okResp);
+		goto rx_err;
+	}
+
+	/* remove \r\n after OK */
+	net_buf_skipcrlf(buf);
+
 	net_pkt_cursor_init(sock->recv_pkt);
 	net_pkt_set_overwrite(sock->recv_pkt, true);
 
@@ -1709,21 +1948,79 @@ static void on_cmd_sockread(struct net_buf **buf, u16_t len)
 	* case the app takes a long time.
 	*/
 	k_work_submit_to_queue(&hl7800_workq, &sock->recv_cb_work);
+	LOG_DBG("Sock %d RX done", sock->socket_id);
+	goto done;
+rx_err:
+	net_pkt_unref(sock->recv_pkt);
+	sock->recv_pkt = NULL;
 done:
-	hl7800_unlock();
+	hl7800_TX_unlock();
+	return false;
+}
+
+static void start_socket_rx(struct hl7800_socket *sock, u16_t rxSize)
+{
+	char sendbuf[sizeof("AT+KTCPRCV=##,####")];
+
+	LOG_DBG("Start socket RX ID:%d size:%d", sock->socket_id, rxSize);
+	if (sock->type == SOCK_DGRAM) {
+		snprintk(sendbuf, sizeof(sendbuf), "AT+KUDPRCV=%d,%u",
+			 sock->socket_id, rxSize);
+	} else {
+		snprintk(sendbuf, sizeof(sendbuf), "AT+KTCPRCV=%d,%u",
+			 sock->socket_id, rxSize);
+	}
+
+	/* Send AT+K**PRCV, The modem
+	* will respond with "CONNECT" and the data requested
+	* and then "OK" or "ERROR".
+	* The reset of the data processing will be handled
+	* via once the echo to AT+K**PRCV is RXd.
+	*/
+	send_at_cmd(sock, sendbuf, K_NO_WAIT, 0);
+}
+
+static void sock_rx_data_cb_work(struct k_work *work)
+{
+	struct hl7800_socket *sock = NULL;
+
+	sock = CONTAINER_OF(work, struct hl7800_socket, rx_data_work);
+
+	if (!sock) {
+		LOG_ERR("sock_rx_data_cb_work: Socket not found");
+		return;
+	}
+
+	/* lock */
+	hl7800_lock();
+
+	/* start RX */
+	start_socket_rx(sock, sock->rx_size);
+	sock->rx_size = 0;
+
+	/* Only unlock the RX because we just locked it above.
+	*  At the end of socket RX, the TX will be unlocked.
+	*/
+	hl7800_RX_unlock();
 }
 
 /* Handler: +KTCP_DATA/+KUDP_DATA: <socket_id>,<left_bytes> */
-static void on_cmd_sockdataind(struct net_buf **buf, u16_t len)
+static bool on_cmd_sockdataind(struct net_buf **buf, u16_t len)
 {
 	int socket_id, left_bytes;
 	size_t out_len;
 	char *delim;
 	char value[sizeof("##,####")];
-	char sendbuf[sizeof("AT+KTCPRCV=##,####")];
 	struct hl7800_socket *sock = NULL;
+	bool unlock = false;
+	bool deferRx = false;
 
-	hl7800_lock();
+	if (!hl7800_TX_locked()) {
+		hl7800_TX_lock();
+		unlock = true;
+	} else {
+		deferRx = true;
+	}
 
 	out_len = net_buf_linearize(value, sizeof(value) - 1, *buf, 0, len);
 	value[out_len] = 0;
@@ -1735,9 +2032,9 @@ static void on_cmd_sockdataind(struct net_buf **buf, u16_t len)
 		goto error;
 	}
 
+	/* replace comma with null */
 	*delim++ = '\0';
 	socket_id = strtol(value, NULL, 0);
-	ictx.last_socket_id = socket_id;
 
 	/* second param is for left_bytes */
 	left_bytes = strtol(delim, NULL, 0);
@@ -1748,31 +2045,25 @@ static void on_cmd_sockdataind(struct net_buf **buf, u16_t len)
 		goto error;
 	}
 
-	if (left_bytes > 0) {
-		LOG_DBG("socket_id:%d size:%d", socket_id, left_bytes);
-		if (sock->type == SOCK_DGRAM) {
-			snprintk(sendbuf, sizeof(sendbuf), "AT+KUDPRCV=%d,%u",
-				 sock->socket_id, left_bytes);
-		} else {
-			snprintk(sendbuf, sizeof(sendbuf), "AT+KTCPRCV=%d,%u",
-				 sock->socket_id, left_bytes);
-		}
+	if (deferRx) {
+		LOG_DBG("Defer socket RX -> ID: %d bytes: %u", socket_id,
+			left_bytes);
+		sock->rx_size = left_bytes;
+		k_work_submit_to_queue(&hl7800_workq, &sock->rx_data_work);
+	} else {
+		ictx.last_socket_id = socket_id;
 
-		/* We entered this trigger due to an unsolicited modem response.
-		* When we send the AT+KTCPRCV command it won't generate an
-		* "OK" response directly.  The modem will respond with
-		* "CONNECT" and the data requested and then "OK" or
-		* "ERROR".  Let's not wait here by passing in a timeout to
-		* send_at_cmd().  Instead, when the resulting response is
-		* received, we trigger on_cmd_sockread() to handle it.
-		*/
-		send_at_cmd(sock, sendbuf, K_NO_WAIT, 0);
-		goto done;
+		if (left_bytes > 0) {
+			start_socket_rx(sock, left_bytes);
+			goto done;
+		}
 	}
 error:
-	hl7800_unlock();
+	if (unlock) {
+		hl7800_TX_unlock();
+	}
 done:
-	return;
+	return true;
 }
 
 static inline struct net_buf *read_rx_allocator(s32_t timeout, void *user_data)
@@ -1833,6 +2124,8 @@ static void hl7800_rx(void)
 	size_t out_len;
 	bool cmd_handled = false;
 	static char rx_msg[MDM_HANDLER_MATCH_MAX_LEN];
+	bool unlock = false;
+	bool removeLineFromBuf = true;
 
 	static const struct cmd_handler handlers[] = {
 		/* NON-SOCKET COMMAND ECHOES to clear last_socket_id */
@@ -1902,8 +2195,15 @@ static void hl7800_rx(void)
 		k_sem_take(&ictx.mdm_ctx.rx_sem, K_FOREVER);
 
 		hl7800_read_rx(&rx_buf);
+		if (!hl7800_RX_locked()) {
+			hl7800_RX_lock();
+			unlock = true;
+		} else {
+			unlock = false;
+		}
 
 		while (rx_buf) {
+			removeLineFromBuf = true;
 			cmd_handled = false;
 			net_buf_skipcrlf(&rx_buf);
 			if (!rx_buf) {
@@ -1941,7 +2241,9 @@ static void hl7800_rx(void)
 						handlers[i].cmd, len);
 					/* call handler */
 					if (handlers[i].func) {
-						handlers[i].func(&rx_buf, len);
+						removeLineFromBuf =
+							handlers[i].func(
+								&rx_buf, len);
 					}
 					cmd_handled = true;
 
@@ -1976,19 +2278,18 @@ static void hl7800_rx(void)
 				/* NOTE: may need to increase log_strdup buffers
 				*  if many unhandled commands happen in quick
 				*  succession */
-				LOG_WRN("UNHANDLED RX: %s", log_strdup(msg));
+				LOG_WRN("UNHANDLED RX(len:%d): %s", len,
+					log_strdup(msg));
 			}
 #endif
-			if (frag && rx_buf) {
+			if (removeLineFromBuf && frag && rx_buf) {
 				/* clear out processed line (buffers) */
-				while (frag && rx_buf != frag) {
-					rx_buf = net_buf_frag_del(NULL, rx_buf);
-				}
-
-				net_buf_pull(rx_buf, offset);
+				net_buf_remove(&rx_buf, offset);
 			}
 		}
-
+		if (unlock) {
+			hl7800_RX_unlock();
+		}
 		/* give up time if we have a solid stream of data */
 		k_yield();
 	}
@@ -2078,7 +2379,7 @@ static int hl7800_modem_reset(void)
 	}
 
 	/* stop RSSI delay work */
-	k_delayed_work_cancel(&ictx.rssi_query_work);
+	hl7800_stop_rssi_work();
 
 	modem_reset(true);
 
@@ -2274,8 +2575,7 @@ static int hl7800_power_off(void)
 	wakeup_hl7800();
 #else
 	/* stop RSSI delay work */
-	k_delayed_work_cancel(&ictx.rssi_query_work);
-
+	hl7800_stop_rssi_work();
 #endif
 	ret = send_at_cmd(NULL, "AT+CPOF", MDM_CMD_SEND_TIMEOUT,
 			  MDM_DEFAULT_AT_CMD_RETRIES);
@@ -2496,11 +2796,12 @@ static int offload_connect(struct net_context *context,
 	}
 
 done:
+	hl7800_unlock();
+
 	if (cb) {
 		cb(context, ret, user_data);
 	}
 
-	hl7800_unlock();
 	return ret;
 }
 
@@ -2550,8 +2851,9 @@ static int offload_sendto(struct net_pkt *pkt, const struct sockaddr *dst_addr,
 	}
 
 	hl7800_lock();
-
 	ret = send_data(sock, pkt);
+	hl7800_unlock();
+
 	if (ret < 0) {
 		LOG_ERR("send_data error: %d", ret);
 	}
@@ -2560,7 +2862,6 @@ static int offload_sendto(struct net_pkt *pkt, const struct sockaddr *dst_addr,
 	if (cb) {
 		cb(context, ret, user_data);
 	}
-	hl7800_unlock();
 
 	return ret;
 }
@@ -2627,6 +2928,9 @@ static int offload_put(struct net_context *context)
 		/* socket was already closed?  Exit quietly here. */
 		return 0;
 	}
+
+	/* cancel notif work if queued */
+	k_delayed_work_cancel(&sock->notif_work);
 
 	hl7800_lock();
 
@@ -2705,6 +3009,10 @@ static int hl7800_init(struct device *dev)
 	for (i = 0; i < MDM_MAX_SOCKETS; i++) {
 		k_work_init(&ictx.sockets[i].recv_cb_work,
 			    sockreadrecv_cb_work);
+		k_work_init(&ictx.sockets[i].rx_data_work,
+			    sock_rx_data_cb_work);
+		k_delayed_work_init(&ictx.sockets[i].notif_work,
+				    sock_notif_cb_work);
 		k_sem_init(&ictx.sockets[i].sock_send_sem, 0, 1);
 	}
 	k_sem_init(&ictx.response_sem, 0, 1);
