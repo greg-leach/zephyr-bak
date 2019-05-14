@@ -198,7 +198,8 @@ static const struct mdm_control_pinconfig pinconfig[] = {
 
 #define MDM_MANUFACTURER_LENGTH 16
 #define MDM_MODEL_LENGTH 7
-#define MDM_REVISION_LENGTH 25
+#define MDM_REVISION_LENGTH_MIN 25
+#define MDM_REVISION_LENGTH_MAX 29
 #define MDM_IMEI_LENGTH 16
 #define MDM_SN_LENGTH 15
 #define MDM_SN_RESPONSE_LENGTH MDM_SN_LENGTH + 10
@@ -304,7 +305,7 @@ struct hl7800_iface_ctx {
 	/* NOTE: make sure length is +1 for null char */
 	char mdm_manufacturer[MDM_MANUFACTURER_LENGTH];
 	char mdm_model[MDM_MODEL_LENGTH];
-	char mdm_revision[MDM_REVISION_LENGTH];
+	char mdm_revision[MDM_REVISION_LENGTH_MAX];
 	char mdm_imei[MDM_IMEI_LENGTH];
 	char mdm_sn[MDM_SN_LENGTH];
 
@@ -1068,12 +1069,11 @@ static bool on_cmd_atcmdinfo_revision(struct net_buf **buf, u16_t len)
 	struct net_buf *frag = NULL;
 	u16_t offset;
 	size_t out_len;
-	int len_no_null = MDM_REVISION_LENGTH - 1;
 
 	/* make sure revision data is received
 	*  waiting for: \r\nAHL7800.1.2.3.1.20171211\r\n
 	*/
-	waitForModemData(buf, net_buf_frags_len(*buf), MDM_REVISION_LENGTH + 3);
+	waitForModemData(buf, net_buf_frags_len(*buf), MDM_REVISION_LENGTH_MIN + 3);
 
 	net_buf_skipcrlf(buf);
 	if (!*buf) {
@@ -1087,11 +1087,11 @@ static bool on_cmd_atcmdinfo_revision(struct net_buf **buf, u16_t len)
 		LOG_ERR("Unable to find rev end");
 		goto done;
 	}
-	if (len < len_no_null) {
+	if (len < (MDM_REVISION_LENGTH_MIN - 1)) {
 		LOG_WRN("revision too short (len:%d)", len);
-	} else if (len > len_no_null) {
+	} else if (len > (MDM_REVISION_LENGTH_MAX - 1)) {
 		LOG_WRN("revision too long (len:%d)", len);
-		len = MDM_REVISION_LENGTH;
+		len = MDM_REVISION_LENGTH_MAX;
 	}
 
 	out_len = net_buf_linearize(
