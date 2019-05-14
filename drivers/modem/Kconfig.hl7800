@@ -35,11 +35,10 @@ config MODEM_HL7800_RX_WORKQ_STACK_SIZE
 
 config MODEM_HL7800_APN_NAME
 	string "APN name for establishing network connection"
-	default "jtm2m"
+	default "internet"
 	help
 	  This setting is used in the AT+KCNXCFG command to set the APN name
-	  for the network connection context.  Normally, don't need to change
-	  this value.
+	  for the network connection context.
 
 config MODEM_HL7800_INIT_PRIORITY
 	int "HL7800 driver init priority"
