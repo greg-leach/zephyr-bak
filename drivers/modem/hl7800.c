@@ -108,6 +108,8 @@ enum mdm_control_pins {
 	MAX_MDM_CONTROL_PINS,
 };
 
+enum mdm_radio_mode { MDM_RAT_CAT_M1, MDM_RAT_CAT_NB1 };
+
 enum net_operator_status { NO_OPERATOR, REGISTERED };
 
 static const struct mdm_control_pinconfig pinconfig[] = {
@@ -301,20 +303,18 @@ struct hl7800_iface_ctx {
 	struct k_work iface_status_work;
 	struct k_delayed_work dns_work;
 
-	/* modem data  */
+	/* modem info */
 	/* NOTE: make sure length is +1 for null char */
 	char mdm_manufacturer[MDM_MANUFACTURER_LENGTH];
 	char mdm_model[MDM_MODEL_LENGTH];
 	char mdm_revision[MDM_REVISION_LENGTH_MAX];
 	char mdm_imei[MDM_IMEI_LENGTH];
 	char mdm_sn[MDM_SN_LENGTH];
-
-	u8_t mdm_startup_state;
 	char mdm_network_status[MDM_NETWORK_STATUS_LENGTH];
+	u8_t mdm_startup_state;
+	enum mdm_radio_mode mdm_rat;
 
 	/* modem state */
-	int ev_csps;
-	int ev_rrcstate;
 	bool allowSleep;
 	enum sleep_state sleepState;
 	enum hl7800_network_state networkState;
@@ -1073,7 +1073,8 @@ static bool on_cmd_atcmdinfo_revision(struct net_buf **buf, u16_t len)
 	/* make sure revision data is received
 	*  waiting for: \r\nAHL7800.1.2.3.1.20171211\r\n
 	*/
-	waitForModemData(buf, net_buf_frags_len(*buf), MDM_REVISION_LENGTH_MIN + 3);
+	waitForModemData(buf, net_buf_frags_len(*buf),
+			 MDM_REVISION_LENGTH_MIN + 3);
 
 	net_buf_skipcrlf(buf);
 	if (!*buf) {
@@ -1379,6 +1380,19 @@ done:
 	return true;
 }
 
+/* Handler: +KSRAT: # */
+static bool on_cmd_radio_tech_status(struct net_buf **buf, u16_t len)
+{
+	size_t out_len;
+	char value[len + 1];
+
+	out_len = net_buf_linearize(value, sizeof(value) - 1, *buf, 0, len);
+	value[out_len] = 0;
+	ictx.mdm_rat = strtol(value, NULL, 10);
+
+	return true;
+}
+
 /* Handler: +KSUP: # */
 static bool on_cmd_startup_report(struct net_buf **buf, u16_t len)
 {
@@ -1452,7 +1466,11 @@ static void iface_status_work_cb(struct k_work *work)
 		    ictx.operatorStatus == REGISTERED) {
 			/* bring the iface up */
 			net_if_up(ictx.iface);
+		} else {
+			/* bring the iface down */
+			net_if_down(ictx.iface);
 		}
+
 		break;
 	default:
 		if (ictx.iface && net_if_is_up(ictx.iface)) {
@@ -2141,6 +2159,9 @@ static void hl7800_rx(void)
 		CMD_HANDLER("AT+CPSMS=", atcmdecho_nosock),
 		CMD_HANDLER("AT+CEDRXS=", atcmdecho_nosock),
 		CMD_HANDLER("AT+COPS?", atcmdecho_nosock),
+		CMD_HANDLER("AT+KSRAT?", atcmdecho_nosock),
+		CMD_HANDLER("AT+KSRAT=", atcmdecho_nosock),
+		CMD_HANDLER("AT+CPOF", atcmdecho_nosock),
 
 		/* SOCKET COMMAND ECHOES for last_socket_id processing */
 		CMD_HANDLER("AT+KTCPCFG=", atcmdecho),
@@ -2161,6 +2182,7 @@ static void hl7800_rx(void)
 		CMD_HANDLER("+CGCONTRDP: ", atcmdinfo_ipaddr),
 		CMD_HANDLER("AT+CGSN", atcmdinfo_imei),
 		CMD_HANDLER("+COPS: ", atcmdinfo_operator_status),
+		CMD_HANDLER("+KSRAT: ", radio_tech_status),
 
 		/* UNSOLICITED modem information */
 		/* mobile startup report */
@@ -2259,10 +2281,9 @@ static void hl7800_rx(void)
 					* handler loop".  Let's skip any
 					* "extra" data and look for the next
 					* CR/LF, leaving us ready for the
-					* next handler search.  Ignore the
-					* length returned.
+					* next handler search.
 					*/
-					(void)net_buf_findcrlf(rx_buf, &frag,
+					len = net_buf_findcrlf(rx_buf, &frag,
 							       &offset);
 					break;
 				}
@@ -2284,7 +2305,7 @@ static void hl7800_rx(void)
 #endif
 			if (removeLineFromBuf && frag && rx_buf) {
 				/* clear out processed line (buffers) */
-				net_buf_remove(&rx_buf, offset);
+				net_buf_remove(&rx_buf, len);
 			}
 		}
 		if (unlock) {
@@ -2330,6 +2351,8 @@ void mdm_uart_dsr_callback(struct device *port, struct gpio_callback *cb,
 	if (ictx.sleepState == WAKING && !val) {
 		ictx.sleepState = AWAKE;
 		k_sem_give(&ictx.mdm_awake);
+	} else if (val && ictx.sleepState == AWAKE) {
+		ictx.sleepState = WAKING;
 	}
 
 	LOG_DBG("MDM_UART_DSR:%d", val);
@@ -2368,9 +2391,24 @@ static int modem_reset(bool keepAwake)
 	return 0;
 }
 
+static void waitForBoot(void)
+{
+	int ret;
+
+	k_sem_reset(&ictx.mdm_awake);
+	LOG_DBG("Waiting for modem to boot...");
+	ret = k_sem_take(&ictx.mdm_awake, MDM_BOOT_TIME);
+	if (ret) {
+		LOG_ERR("Err waiting for boot: %d, DSR: %u", ret,
+			ictx.dsr_state);
+	}
+	LOG_DBG("Modem booted!");
+}
+
 static int hl7800_modem_reset(void)
 {
 	int ret = 0;
+	bool rat_set = false;
 
 	ictx.restarting = true;
 	/* bring down network interface */
@@ -2383,15 +2421,7 @@ static int hl7800_modem_reset(void)
 
 	modem_reset(true);
 
-	k_sem_reset(&ictx.mdm_awake);
-	LOG_DBG("Waiting for modem to boot...");
-	ret = k_sem_take(&ictx.mdm_awake, MDM_BOOT_TIME);
-	if (ret) {
-		LOG_ERR("Err waiting for boot: %d, DSR: %u", ret,
-			ictx.dsr_state);
-	}
-
-	LOG_DBG("Modem booted!");
+	waitForBoot();
 
 	/* SETUP THE MODEM */
 	LOG_INF("Setting up modem");
@@ -2410,6 +2440,41 @@ static int hl7800_modem_reset(void)
 	if (ret < 0) {
 		LOG_ERR("AT+CEREG ret:%d", ret);
 		goto error;
+	}
+
+	/* query current Radio Access Technology (RAT) */
+	ret = send_at_cmd(NULL, "AT+KSRAT?", MDM_CMD_SEND_TIMEOUT,
+			  MDM_DEFAULT_AT_CMD_RETRIES);
+	if (ret < 0) {
+		LOG_ERR("AT+KSRAT? ret:%d", ret);
+		goto error;
+	}
+
+	/* setup RAT */
+#ifdef CONFIG_MODEM_HL7800_CAT_M1
+	if (ictx.mdm_rat != MDM_RAT_CAT_M1) {
+		ret = send_at_cmd(NULL, "AT+KSRAT=0", MDM_CMD_SEND_TIMEOUT,
+				  MDM_DEFAULT_AT_CMD_RETRIES);
+		if (ret < 0) {
+			LOG_ERR("AT+KSRAT ret:%d", ret);
+			goto error;
+		}
+		rat_set = true;
+	}
+#elif CONFIG_MODEM_HL7800_CAT_NB1
+	if (ictx.mdm_rat != MDM_RAT_CAT_NB1) {
+		ret = send_at_cmd(NULL, "AT+KSRAT=1", MDM_CMD_SEND_TIMEOUT,
+				  MDM_DEFAULT_AT_CMD_RETRIES);
+		if (ret < 0) {
+			LOG_ERR("AT+KSRAT ret:%d", ret);
+			goto error;
+		}
+		rat_set = true;
+	}
+#endif
+	if (rat_set) {
+		/* RAT was just set, wait for reboot */
+		waitForBoot();
 	}
 
 	/* Setup APN */
@@ -2558,7 +2623,7 @@ s32_t mdm_hl7800_reset(void)
 	ret = hl7800_modem_reset();
 	if (ret == 0) {
 		/* update the iface status after reset */
-		iface_status_work_cb(NULL);
+		k_work_submit_to_queue(&hl7800_workq, &ictx.iface_status_work);
 	}
 
 	hl7800_unlock();
@@ -2577,14 +2642,19 @@ static int hl7800_power_off(void)
 	/* stop RSSI delay work */
 	hl7800_stop_rssi_work();
 #endif
-	ret = send_at_cmd(NULL, "AT+CPOF", MDM_CMD_SEND_TIMEOUT,
-			  MDM_DEFAULT_AT_CMD_RETRIES);
+	/* use the restarting flag to prevent +CEREG updates */
+	ictx.restarting = true;
+
+	ret = send_at_cmd(NULL, "AT+CPOF", MDM_CMD_SEND_TIMEOUT, 1);
 	if (ret) {
 		LOG_ERR("AT+CPOF ret:%d", ret);
 		return ret;
 	}
-
 	allow_sleep(true);
+	/* bring the iface down */
+	if (ictx.iface) {
+		net_if_down(ictx.iface);
+	}
 	LOG_INF("Modem powered off");
 	return ret;
 }

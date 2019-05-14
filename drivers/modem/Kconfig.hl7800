@@ -19,6 +19,28 @@ menuconfig MODEM_HL7800
 
 if MODEM_HL7800
 
+config MODEM_HL7800_APN_NAME
+	string "APN name for establishing network connection"
+	default "internet"
+	help
+	  This setting is used in the AT+KCNXCFG command to set the APN name
+	  for the network connection context.
+
+choice
+	prompt "Radio Access Technology (RAT)"
+	default MODEM_HL7800_CAT_M1
+
+config MODEM_HL7800_CAT_M1
+	bool "LTE cat M1"
+	help
+	  Enable LTE cat M1 (LTE-M1) mode
+
+config MODEM_HL7800_CAT_NB1
+	bool "LTE cat NB1"
+	help
+	  Enable LTE cat NB1 (NB-IoT) mode
+endchoice
+
 config MODEM_HL7800_RX_STACK_SIZE
 	int "Size of the stack for the HL7800 modem driver RX thread"
 	default 1024
@@ -33,13 +55,6 @@ config MODEM_HL7800_RX_WORKQ_STACK_SIZE
 	  to the rest of the network stack, letting the rx thread continue
 	  processing data.
 
-config MODEM_HL7800_APN_NAME
-	string "APN name for establishing network connection"
-	default "internet"
-	help
-	  This setting is used in the AT+KCNXCFG command to set the APN name
-	  for the network connection context.
-
 config MODEM_HL7800_INIT_PRIORITY
 	int "HL7800 driver init priority"
 	default 80
@@ -49,4 +64,4 @@ config MODEM_HL7800_INIT_PRIORITY
 	  Note that the priority needs to be lower than the net stack
 	  so that it can start before the networking sub-system.
 
-endif
+endif # MODEM_HL7800
