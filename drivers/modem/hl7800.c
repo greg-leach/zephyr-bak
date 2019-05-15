@@ -183,6 +183,7 @@ static const struct mdm_control_pinconfig pinconfig[] = {
 #define MDM_CMD_CONN_TIMEOUT K_SECONDS(31)
 
 #define MDM_MAX_DATA_LENGTH 1500
+#define MDM_MTU 1500
 
 #define MDM_RECV_MAX_BUF 30
 #define MDM_RECV_BUF_SIZE 128
@@ -1982,9 +1983,23 @@ static void start_socket_rx(struct hl7800_socket *sock, u16_t rxSize)
 
 	LOG_DBG("Start socket RX ID:%d size:%d", sock->socket_id, rxSize);
 	if (sock->type == SOCK_DGRAM) {
+#if defined(CONFIG_NET_IPV4)
+		if (rxSize > (net_if_get_mtu(ictx.iface) - NET_IPV4UDPH_LEN)) {
+			rxSize = net_if_get_mtu(ictx.iface) - NET_IPV4UDPH_LEN;
+		}
+#else
+#error IPV6 not supported in HL7800 driver
+#endif
 		snprintk(sendbuf, sizeof(sendbuf), "AT+KUDPRCV=%d,%u",
 			 sock->socket_id, rxSize);
 	} else {
+#if defined(CONFIG_NET_IPV4)
+		if (rxSize > (net_if_get_mtu(ictx.iface) - NET_IPV4TCPH_LEN)) {
+			rxSize = net_if_get_mtu(ictx.iface) - NET_IPV4TCPH_LEN;
+		}
+#else
+#error IPV6 not supported in HL7800 driver
+#endif
 		snprintk(sendbuf, sizeof(sendbuf), "AT+KTCPRCV=%d,%u",
 			 sock->socket_id, rxSize);
 	}
@@ -3202,10 +3217,7 @@ static void offload_iface_init(struct net_if *iface)
 	net_if_set_link_addr(iface, hl7800_get_mac(dev), sizeof(ctx->mac_addr),
 			     NET_LINK_ETHERNET);
 	ctx->iface = iface;
-#if defined(CONFIG_NET_IPV4)
-	net_if_set_mtu(ctx->iface, 1500 + NET_IPV4TCPH_LEN);
-#endif
-	/* TODO: set proper IPv6 MTU */
+
 	/* Update the iface */
 	iface_status_work_cb(NULL);
 	ictx.initialized = true;
@@ -3216,5 +3228,4 @@ static struct net_if_api api_funcs = {
 };
 
 NET_DEVICE_OFFLOAD_INIT(modem_hl7800, "MODEM_HL7800", hl7800_init, &ictx, NULL,
-			CONFIG_MODEM_HL7800_INIT_PRIORITY, &api_funcs,
-			MDM_MAX_DATA_LENGTH);
+			CONFIG_MODEM_HL7800_INIT_PRIORITY, &api_funcs, MDM_MTU);
