@@ -522,7 +522,7 @@ static void socket_put(struct hl7800_socket *sock)
 	}
 
 	sock->context = NULL;
-	sock->socket_id = 0;
+	sock->socket_id = -1;
 	sock->created = false;
 	sock->error = false;
 	sock->error_val = -1;
@@ -1929,6 +1929,12 @@ static void start_socket_rx(struct hl7800_socket *sock, u16_t rxSize)
 {
 	char sendbuf[sizeof("AT+KTCPRCV=##,####")];
 
+	if ((sock->socket_id <= 0) || (sock->rx_size <= 0)) {
+		LOG_WRN("Cannot start socket RX, ID: %d rx size: %d",
+			sock->socket_id, sock->rx_size);
+		return;
+	}
+
 	LOG_DBG("Start socket RX ID:%d size:%d", sock->socket_id, rxSize);
 	sock->state = SOCK_RX;
 	if (sock->type == SOCK_DGRAM) {
@@ -2353,6 +2359,14 @@ static void waitForBoot(void)
 	LOG_DBG("Modem booted!");
 }
 
+static int echoOff(void)
+{
+	int ret = 0;
+	ret = send_at_cmd(NULL, "ATE0", MDM_CMD_SEND_TIMEOUT,
+			  MDM_DEFAULT_AT_CMD_RETRIES, false);
+	return ret;
+}
+
 static int hl7800_modem_reset(void)
 {
 	int ret = 0;
@@ -2375,10 +2389,9 @@ static int hl7800_modem_reset(void)
 	LOG_INF("Setting up modem");
 
 	/* turn OFF echo */
-	ret = send_at_cmd(NULL, "ATE0", MDM_CMD_SEND_TIMEOUT,
-			  MDM_DEFAULT_AT_CMD_RETRIES, false);
+	ret = echoOff();
 	if (ret < 0) {
-		LOG_ERR("ATE0 ret:%d", ret);
+		LOG_ERR("Echo off: %d", ret);
 		goto error;
 	}
 
@@ -2423,6 +2436,13 @@ static int hl7800_modem_reset(void)
 	if (rat_set) {
 		/* RAT was just set, wait for reboot */
 		waitForBoot();
+
+		/* turn OFF echo after reboot because it is volatile */
+		ret = echoOff();
+		if (ret < 0) {
+			LOG_ERR("Echo off: %d", ret);
+			goto error;
+		}
 	}
 
 	/* Setup APN */
@@ -3028,7 +3048,9 @@ static int hl7800_init(struct device *dev)
 		 "Incorrect modem pinconfig!");
 
 	(void)memset(&ictx, 0, sizeof(ictx));
+	/* init sockets */
 	for (i = 0; i < MDM_MAX_SOCKETS; i++) {
+		ictx.sockets[i].socket_id = -1;
 		k_work_init(&ictx.sockets[i].recv_cb_work,
 			    sockreadrecv_cb_work);
 		k_work_init(&ictx.sockets[i].rx_data_work,
