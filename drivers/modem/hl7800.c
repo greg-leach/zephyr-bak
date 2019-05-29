@@ -40,11 +40,12 @@ LOG_MODULE_REGISTER(LOG_DOMAIN);
 /* Uncomment the #define below to enable a hexdump of all incoming
  * data from the modem receiver
  */
-/* #define ENABLE_VERBOSE_MODEM_RECV_HEXDUMP 1 */
+/* #define HL7800_ENABLE_VERBOSE_MODEM_RECV_HEXDUMP 1 */
 
-#define LOG_UNHANDLED_RX_MSGS 1
-/* #define DEBUG_HL7800_RX_LOCK 1 */
-/* #define DEBUG_HL7800_TX_LOCK 1 */
+#define HL7800_LOG_UNHANDLED_RX_MSGS 1
+/* #define HL7800_DEBUG_RX_LOCK 1 */
+/* #define HL7800_DEBUG_TX_LOCK 1 */
+/* #define HL7800_DEBUG_WAKE_IO 1 */
 
 enum sleep_state {
 	ASLEEP,
@@ -340,7 +341,7 @@ static struct hl7800_iface_ctx ictx;
 static size_t hl7800_read_rx(struct net_buf **buf);
 
 /*** Verbose Debugging Functions ***/
-#if defined(ENABLE_VERBOSE_MODEM_RECV_HEXDUMP)
+#if defined(HL7800_ENABLE_VERBOSE_MODEM_RECV_HEXDUMP)
 static inline void _hexdump(const u8_t *packet, size_t length)
 {
 	char output[sizeof("xxxxyyyy xxxxyyyy")];
@@ -397,14 +398,14 @@ static inline void _hexdump(const u8_t *packet, size_t length)
 static int hl7800_RX_lock(void)
 {
 	int rc = 0;
-#ifdef DEBUG_HL7800_RX_LOCK
+#ifdef HL7800_DEBUG_RX_LOCK
 	LOG_WRN("Locking RX [%p]...", k_current_get());
 #endif
 
 	if ((rc = k_sem_take(&hl7800_RX_lock_sem, K_FOREVER)) != 0) {
 		LOG_ERR("Unable to lock hl7800 (%d)", rc);
 	} else {
-#ifdef DEBUG_HL7800_RX_LOCK
+#ifdef HL7800_DEBUG_RX_LOCK
 		LOG_WRN("Locked RX [%p]", k_current_get());
 #endif
 	}
@@ -414,11 +415,11 @@ static int hl7800_RX_lock(void)
 
 static void hl7800_RX_unlock(void)
 {
-#ifdef DEBUG_HL7800_RX_LOCK
+#ifdef HL7800_DEBUG_RX_LOCK
 	LOG_WRN("UNLocking RX [%p]...", k_current_get());
 #endif
 	k_sem_give(&hl7800_RX_lock_sem);
-#ifdef DEBUG_HL7800_RX_LOCK
+#ifdef HL7800_DEBUG_RX_LOCK
 	LOG_WRN("UNLocked RX [%p]", k_current_get());
 #endif
 }
@@ -435,13 +436,13 @@ static bool hl7800_RX_locked(void)
 static int hl7800_TX_lock(void)
 {
 	int rc = 0;
-#ifdef DEBUG_HL7800_TX_LOCK
+#ifdef HL7800_DEBUG_TX_LOCK
 	LOG_WRN("Locking TX [%p]...", k_current_get());
 #endif
 	if ((rc = k_sem_take(&hl7800_TX_lock_sem, K_FOREVER)) != 0) {
 		LOG_ERR("Unable to lock hl7800 (%d)", rc);
 	} else {
-#ifdef DEBUG_HL7800_TX_LOCK
+#ifdef HL7800_DEBUG_TX_LOCK
 		LOG_WRN("Locked TX [%p]", k_current_get());
 #endif
 	}
@@ -451,11 +452,11 @@ static int hl7800_TX_lock(void)
 
 static void hl7800_TX_unlock(void)
 {
-#ifdef DEBUG_HL7800_TX_LOCK
+#ifdef HL7800_DEBUG_TX_LOCK
 	LOG_WRN("UNLocking TX [%p]...", k_current_get());
 #endif
 	k_sem_give(&hl7800_TX_lock_sem);
-#ifdef DEBUG_HL7800_TX_LOCK
+#ifdef HL7800_DEBUG_TX_LOCK
 	LOG_WRN("UNLocked TX [%p]", k_current_get());
 #endif
 }
@@ -557,11 +558,15 @@ char *hl7800_sprint_ip_addr(const struct sockaddr *addr)
 static void modem_assert_wake(bool assert)
 {
 	if (assert) {
+#ifdef HL7800_DEBUG_WAKE_IO
 		LOG_DBG("MDM_WAKE_PIN -> ASSERTED");
+#endif
 		gpio_pin_write(ictx.gpio_port_dev[MDM_WAKE],
 			       pinconfig[MDM_WAKE].pin, MDM_WAKE_ASSERTED);
 	} else {
+#ifdef HL7800_DEBUG_WAKE_IO
 		LOG_DBG("MDM_WAKE_PIN -> NOT_ASSERTED");
+#endif
 		gpio_pin_write(ictx.gpio_port_dev[MDM_WAKE],
 			       pinconfig[MDM_WAKE].pin, MDM_WAKE_NOT_ASSERTED);
 	}
@@ -599,12 +604,16 @@ static void modem_assert_fast_shutd(bool assert)
 static void modem_assert_uart_dtr(bool assert)
 {
 	if (assert) {
+#ifdef HL7800_DEBUG_WAKE_IO
 		LOG_DBG("MDM_UART_DTR -> ASSERTED");
+#endif
 		gpio_pin_write(ictx.gpio_port_dev[MDM_UART_DTR],
 			       pinconfig[MDM_UART_DTR].pin,
 			       MDM_UART_DTR_ASSERTED);
 	} else {
+#ifdef HL7800_DEBUG_WAKE_IO
 		LOG_DBG("MDM_UART_DTR -> NOT_ASSERTED");
+#endif
 		gpio_pin_write(ictx.gpio_port_dev[MDM_UART_DTR],
 			       pinconfig[MDM_UART_DTR].pin,
 			       MDM_UART_DTR_NOT_ASSERTED);
@@ -677,10 +686,6 @@ static int send_at_cmd(struct hl7800_socket *sock, const u8_t *data,
 		retries--;
 		if (retries < 0) {
 			retries = 0;
-		}
-		if (ret) {
-			LOG_ERR("Err send %s: %d, tries left: %d",
-				log_strdup(data), ret, retries);
 		}
 	} while (ret != 0 && retries > 0);
 done:
@@ -1365,6 +1370,8 @@ static bool on_cmd_startup_report(struct net_buf **buf, u16_t len)
 	size_t out_len;
 	char value[len + 1];
 
+	ictx.sleepState = AWAKE;
+	k_sem_give(&ictx.mdm_awake);
 	out_len = net_buf_linearize(value, sizeof(value) - 1, *buf, 0, len);
 	value[out_len] = 0;
 	ictx.mdm_startup_state = strtol(value, NULL, 10);
@@ -1383,11 +1390,13 @@ static int hl7800_query_rssi(void)
 	return ret;
 }
 
+#ifndef CONFIG_MODEM_HL7800_LOW_POWER_MODE
 static void hl7800_start_rssi_work(void)
 {
 	k_delayed_work_submit_to_queue(&hl7800_workq, &ictx.rssi_query_work,
 				       K_SECONDS(RSSI_TIMEOUT_SECS));
 }
+#endif
 
 static void hl7800_stop_rssi_work(void)
 {
@@ -1397,8 +1406,15 @@ static void hl7800_stop_rssi_work(void)
 static void hl7800_rssi_query_work(struct k_work *work)
 {
 	hl7800_lock();
+#ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
+	wakeup_hl7800();
+#endif
 	/* query modem RSSI */
 	hl7800_query_rssi();
+#ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
+	allow_sleep(true);
+#endif
+
 	hl7800_unlock();
 
 	/* re-start RSSI query work */
@@ -1412,6 +1428,9 @@ static void iface_status_work_cb(struct k_work *work)
 
 	hl7800_lock();
 	LOG_DBG("Updating network state...");
+#ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
+	wakeup_hl7800();
+#endif
 	/* bring iface up/down */
 	switch (ictx.networkState) {
 	case HOME_NETWORK:
@@ -1426,6 +1445,10 @@ static void iface_status_work_cb(struct k_work *work)
 				  false);
 		if (ret < 0) {
 			LOG_ERR("AT+COPS ret:%d", ret);
+			if (ictx.iface) {
+				/* bring the iface down */
+				net_if_down(ictx.iface);
+			}
 			break;
 		}
 
@@ -1437,7 +1460,6 @@ static void iface_status_work_cb(struct k_work *work)
 			/* bring the iface down */
 			net_if_down(ictx.iface);
 		}
-
 		break;
 	default:
 		if (ictx.iface && net_if_is_up(ictx.iface)) {
@@ -1466,6 +1488,9 @@ static void iface_status_work_cb(struct k_work *work)
 		}
 	}
 	LOG_DBG("Network state updated");
+#ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
+	allow_sleep(true);
+#endif
 	hl7800_unlock();
 }
 
@@ -1564,6 +1589,7 @@ static bool on_cmd_sock_ind(struct net_buf **buf, u16_t len)
 	char *delim;
 	char value[len + 1];
 	size_t out_len;
+	int id;
 
 	ictx.last_error = 0;
 
@@ -1577,12 +1603,12 @@ static bool on_cmd_sock_ind(struct net_buf **buf, u16_t len)
 		goto done;
 	}
 
-	ictx.last_socket_id = strtol(value, NULL, 10);
-	sock = socket_from_id(ictx.last_socket_id);
+	id = strtol(value, NULL, 10);
+	sock = socket_from_id(id);
 	if (sock) {
 		k_sem_give(&sock->sock_send_sem);
 	} else {
-		LOG_ERR("Could not find socket id (%d)", ictx.last_socket_id);
+		LOG_ERR("Could not find socket id (%d)", id);
 	}
 
 done:
@@ -1593,6 +1619,29 @@ done:
 static bool on_cmd_sockerror(struct net_buf **buf, u16_t len)
 {
 	struct hl7800_socket *sock = NULL;
+
+	ictx.last_error = -EIO;
+	sock = socket_from_id(ictx.last_socket_id);
+	if (!sock) {
+		k_sem_give(&ictx.response_sem);
+	} else {
+		k_sem_give(&sock->sock_send_sem);
+	}
+
+	return true;
+}
+
+/* Handler: CME/CMS Error */
+static bool on_cmd_sock_error_code(struct net_buf **buf, u16_t len)
+{
+	struct hl7800_socket *sock = NULL;
+	char value[len + 1];
+	size_t out_len;
+
+	out_len = net_buf_linearize(value, sizeof(value), *buf, 0, len);
+	value[out_len] = 0;
+
+	LOG_ERR("Error code: %s", value);
 
 	ictx.last_error = -EIO;
 	sock = socket_from_id(ictx.last_socket_id);
@@ -1642,6 +1691,7 @@ static bool on_cmd_sock_notif(struct net_buf **buf, u16_t len)
 	u8_t notifVal;
 	bool err = false;
 	bool triggerSem = true;
+	int id;
 
 	out_len = net_buf_linearize(value, sizeof(value), *buf, 0, len);
 	value[out_len] = 0;
@@ -1670,10 +1720,10 @@ static bool on_cmd_sock_notif(struct net_buf **buf, u16_t len)
 		break;
 	}
 
-	ictx.last_socket_id = strtol(value, NULL, 10);
-	LOG_WRN("+K**P_NOTIF: %d,%d", ictx.last_socket_id, notifVal);
+	id = strtol(value, NULL, 10);
+	LOG_WRN("+K**P_NOTIF: %d,%d", id, notifVal);
 
-	sock = socket_from_id(ictx.last_socket_id);
+	sock = socket_from_id(id);
 	if (err) {
 		if (sock) {
 			/* Send NULL packet to callback to notify upper stack layers
@@ -1691,8 +1741,7 @@ static bool on_cmd_sock_notif(struct net_buf **buf, u16_t len)
 				k_sem_give(&sock->sock_send_sem);
 			}
 		} else {
-			LOG_ERR("Could not find socket id (%d)",
-				ictx.last_socket_id);
+			LOG_ERR("Could not find socket id (%d)", id);
 		}
 	}
 done:
@@ -1900,6 +1949,9 @@ rx_err:
 	sock->recv_pkt = NULL;
 done:
 	sock->state = SOCK_IDLE;
+#ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
+	allow_sleep(true);
+#endif
 	hl7800_TX_unlock();
 }
 
@@ -1925,14 +1977,14 @@ done:
 	return removeDataFromBuffer;
 }
 
-static void start_socket_rx(struct hl7800_socket *sock, u16_t rxSize)
+static int start_socket_rx(struct hl7800_socket *sock, u16_t rxSize)
 {
 	char sendbuf[sizeof("AT+KTCPRCV=##,####")];
 
 	if ((sock->socket_id <= 0) || (sock->rx_size <= 0)) {
 		LOG_WRN("Cannot start socket RX, ID: %d rx size: %d",
 			sock->socket_id, sock->rx_size);
-		return;
+		return -1;
 	}
 
 	LOG_DBG("Start socket RX ID:%d size:%d", sock->socket_id, rxSize);
@@ -1965,14 +2017,16 @@ static void start_socket_rx(struct hl7800_socket *sock, u16_t rxSize)
 	* will respond with "CONNECT" and the data requested
 	* and then "OK" or "ERROR".
 	* The reset of the data processing will be handled
-	* via once the echo to AT+K**PRCV is RXd.
+	* via once CONNECT is RXd.
 	*/
 	send_at_cmd(sock, sendbuf, K_NO_WAIT, 0, false);
+	return 0;
 }
 
 static void sock_rx_data_cb_work(struct k_work *work)
 {
 	struct hl7800_socket *sock = NULL;
+	int rc;
 
 	sock = CONTAINER_OF(work, struct hl7800_socket, rx_data_work);
 
@@ -1983,20 +2037,27 @@ static void sock_rx_data_cb_work(struct k_work *work)
 
 	/* lock */
 	hl7800_lock();
+#ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
+	wakeup_hl7800();
+#endif
 
 	/* start RX */
-	start_socket_rx(sock, sock->rx_size);
+	rc = start_socket_rx(sock, sock->rx_size);
 
 	/* Only unlock the RX because we just locked it above.
 	*  At the end of socket RX, the TX will be unlocked.
 	*/
 	hl7800_RX_unlock();
+	if (rc < 0) {
+		/* we didnt start socket RX so unlock TX now. */
+		hl7800_TX_unlock();
+	}
 }
 
 /* Handler: +KTCP_DATA/+KUDP_DATA: <socket_id>,<left_bytes> */
 static bool on_cmd_sockdataind(struct net_buf **buf, u16_t len)
 {
-	int socket_id, left_bytes;
+	int socket_id, left_bytes, rc;
 	size_t out_len;
 	char *delim;
 	char value[sizeof("##,####")];
@@ -2040,9 +2101,11 @@ static bool on_cmd_sockdataind(struct net_buf **buf, u16_t len)
 			left_bytes);
 		k_work_submit_to_queue(&hl7800_workq, &sock->rx_data_work);
 	} else {
-		ictx.last_socket_id = socket_id;
 		if (left_bytes > 0) {
-			start_socket_rx(sock, left_bytes);
+			rc = start_socket_rx(sock, left_bytes);
+			if (rc < 0) {
+				goto error;
+			}
 			goto done;
 		}
 	}
@@ -2136,8 +2199,8 @@ static void hl7800_rx(void)
 		/* SOLICITED SOCKET RESPONSES */
 		CMD_HANDLER("OK", sockok),
 		CMD_HANDLER("ERROR", sockerror),
-		CMD_HANDLER("+CME ERROR: ", sockerror),
-		CMD_HANDLER("+CMS ERROR: ", sockerror),
+		CMD_HANDLER("+CME ERROR: ", sock_error_code),
+		CMD_HANDLER("+CMS ERROR: ", sock_error_code),
 		CMD_HANDLER("+CEER: ", sockerror),
 		CMD_HANDLER("+KTCPCFG: ", sockcreate),
 		CMD_HANDLER("+KUDPCFG: ", sockcreate),
@@ -2243,7 +2306,7 @@ static void hl7800_rx(void)
 				}
 			}
 
-#ifdef LOG_UNHANDLED_RX_MSGS
+#ifdef HL7800_LOG_UNHANDLED_RX_MSGS
 			/* Handle unhandled commands */
 			if (!cmd_handled && frag && len > 1) {
 				char msg[len + 1];
@@ -2288,6 +2351,10 @@ void mdm_vgpio_callback(struct device *port, struct gpio_callback *cb,
 	ictx.vgpio_state = val;
 	if (!val) {
 		ictx.sleepState = ASLEEP;
+		if (ictx.iface) {
+			/* bring the iface down */
+			net_if_down(ictx.iface);
+		}
 	} else {
 		ictx.sleepState = WAKING;
 	}
@@ -2371,6 +2438,11 @@ static int hl7800_modem_reset(void)
 {
 	int ret = 0;
 	bool rat_set = false;
+	bool allowSleep = false;
+#ifdef CONFIG_MODEM_HL7800_EDRX
+	int edrxActType;
+	char setEdrxMsg[sizeof("AT+CEDRXS=2,4,\"0000\"")];
+#endif
 
 	ictx.restarting = true;
 	/* bring down network interface */
@@ -2412,7 +2484,7 @@ static int hl7800_modem_reset(void)
 	}
 
 	/* setup RAT */
-#ifdef CONFIG_MODEM_HL7800_CAT_M1
+#if CONFIG_MODEM_HL7800_CAT_M1
 	if (ictx.mdm_rat != MDM_RAT_CAT_M1) {
 		ret = send_at_cmd(NULL, "AT+KSRAT=0", MDM_CMD_SEND_TIMEOUT,
 				  MDM_DEFAULT_AT_CMD_RETRIES, false);
@@ -2468,23 +2540,57 @@ static int hl7800_modem_reset(void)
 
 #ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
 	/* Turn on sleep mode */
-	ret = send_at_cmd(NULL, "AT+KSLEEP=0,2", MDM_CMD_SEND_TIMEOUT,
+	ret = send_at_cmd(NULL, "AT+KSLEEP=0,2,10", MDM_CMD_SEND_TIMEOUT,
 			  MDM_DEFAULT_AT_CMD_RETRIES, false);
 	if (ret < 0) {
 		LOG_ERR("AT+KSLEEP ret:%d", ret);
 		goto error;
 	}
 
+#if CONFIG_MODEM_HL7800_PSM
+	/* Turn off eDRX */
+	ret = send_at_cmd(NULL, "AT+CEDRXS=0", MDM_CMD_SEND_TIMEOUT,
+			  MDM_DEFAULT_AT_CMD_RETRIES, false);
+	if (ret < 0) {
+		LOG_ERR("AT+CEDRXS ret:%d", ret);
+		goto error;
+	}
+
 	/* Turn on PSM */
-	ret = send_at_cmd(NULL, "AT+CPSMS=1,,,\"01111000\",\"00001010\"",
+	ret = send_at_cmd(NULL,
+			  "AT+CPSMS=1,,,\"" CONFIG_MODEM_HL7800_PSM_PERIODIC_TAU
+			  "\",\"" CONFIG_MODEM_HL7800_PSM_ACTIVE_TIME "\"",
 			  MDM_CMD_SEND_TIMEOUT, MDM_DEFAULT_AT_CMD_RETRIES,
 			  false);
 	if (ret < 0) {
 		LOG_ERR("AT+CPSMS ret:%d", ret);
 		goto error;
 	}
+#elif CONFIG_MODEM_HL7800_EDRX
+	/* Turn off PSM */
+	ret = send_at_cmd(NULL, "AT+CPSMS=0", MDM_CMD_SEND_TIMEOUT,
+			  MDM_DEFAULT_AT_CMD_RETRIES, false);
+	if (ret < 0) {
+		LOG_ERR("AT+CPSMS ret:%d", ret);
+		goto error;
+	}
 
-	allow_sleep(true);
+	/* turn on eDRX */
+	if (ictx.mdm_rat == MDM_RAT_CAT_NB1) {
+		edrxActType = 5;
+	} else {
+		edrxActType = 4;
+	}
+	snprintk(setEdrxMsg, sizeof(setEdrxMsg), "AT+CEDRXS=1,%d,\"%s\"",
+		 edrxActType, CONFIG_MODEM_HL7800_EDRX_VALUE);
+	ret = send_at_cmd(NULL, setEdrxMsg, MDM_CMD_SEND_TIMEOUT,
+			  MDM_DEFAULT_AT_CMD_RETRIES, false);
+	if (ret < 0) {
+		LOG_ERR("AT+CEDRXS ret:%d", ret);
+		goto error;
+	}
+#endif
+	allowSleep = true;
 #else
 	/* Turn off sleep mode */
 	ret = send_at_cmd(NULL, "AT+KSLEEP=2", MDM_CMD_SEND_TIMEOUT,
@@ -2578,6 +2684,8 @@ static int hl7800_modem_reset(void)
 		goto error;
 	}
 
+	allow_sleep(allowSleep);
+
 	LOG_INF("Modem ready!");
 error:
 	ictx.restarting = false;
@@ -2670,11 +2778,15 @@ static int offload_get(sa_family_t family, enum net_sock_type type,
 	*  TCP socket needs to be created later once the connection IP address is known.
 	*/
 	if (type == SOCK_DGRAM) {
+#ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
+		wakeup_hl7800();
+#endif
 		ret = send_at_cmd(sock, "AT+KUDPCFG=1,0", MDM_CMD_SEND_TIMEOUT,
 				  0, false);
 		if (ret < 0) {
 			LOG_ERR("AT+KUDPCFG ret:%d", ret);
 			socket_put(sock);
+			goto done;
 		}
 
 		/* Now wait for +KUDP_IND or +KUDP_NOTIF to ensure
@@ -2691,6 +2803,9 @@ static int offload_get(sa_family_t family, enum net_sock_type type,
 		}
 	}
 done:
+#ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
+	allow_sleep(true);
+#endif
 	hl7800_unlock();
 	return ret;
 }
@@ -2796,6 +2911,9 @@ static int offload_connect(struct net_context *context,
 	hl7800_lock();
 
 	if (sock->type == SOCK_STREAM) {
+#ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
+		wakeup_hl7800();
+#endif
 		/* Configure/create TCP connection */
 		if (!sock->created) {
 			snprintk(cmd_cfg, sizeof(cmd_cfg),
@@ -2837,6 +2955,9 @@ static int offload_connect(struct net_context *context,
 	}
 
 done:
+#ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
+	allow_sleep(true);
+#endif
 	hl7800_unlock();
 
 	if (cb) {
@@ -2892,7 +3013,13 @@ static int offload_sendto(struct net_pkt *pkt, const struct sockaddr *dst_addr,
 	}
 
 	hl7800_lock();
+#ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
+	wakeup_hl7800();
+#endif
 	ret = send_data(sock, pkt);
+#ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
+	allow_sleep(true);
+#endif
 	hl7800_unlock();
 
 	if (ret < 0) {
@@ -2975,6 +3102,9 @@ static int offload_put(struct net_context *context)
 	k_delayed_work_cancel(&sock->notif_work);
 
 	hl7800_lock();
+#ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
+	wakeup_hl7800();
+#endif
 
 	/* close connection */
 	if (sock->type == SOCK_STREAM) {
@@ -2997,9 +3127,9 @@ static int offload_put(struct net_context *context)
 	if (ret < 0) {
 		LOG_ERR("AT+K**PDEL ret:%d", ret);
 	}
-
-	/* clear last_socket_id */
-	ictx.last_socket_id = 0;
+#ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
+	allow_sleep(true);
+#endif
 
 	sock->context->connect_cb = NULL;
 	sock->context->recv_cb = NULL;
