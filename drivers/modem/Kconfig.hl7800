@@ -41,6 +41,59 @@ config MODEM_HL7800_CAT_NB1
 	  Enable LTE cat NB1 (NB-IoT) mode
 endchoice
 
+menuconfig MODEM_HL7800_LOW_POWER_MODE
+	bool "Enable low power modes"
+	help
+		Choose this setting to enable a low power mode for the HL7800 modem
+
+if MODEM_HL7800_LOW_POWER_MODE
+
+choice
+	prompt "Low Power Mode"
+	default MODEM_HL7800_EDRX
+
+config MODEM_HL7800_EDRX
+	bool "eDRX"
+	help
+	  Enable LTE eDRX
+
+config MODEM_HL7800_PSM
+	bool "PSM"
+	help
+	  Enable Power Save Mode (PSM)
+endchoice
+
+if MODEM_HL7800_EDRX
+
+config MODEM_HL7800_EDRX_VALUE
+	string "Requested eDRX timer"
+	default "0101"
+	help
+	  Half a byte in a 4-bit format. The eDRX value refers to bit 4 to 1
+	  of octet 3 of the Extended DRX parameters information element.
+
+endif # MODEM_HL7800_EDRX
+
+if MODEM_HL7800_PSM
+
+config MODEM_HL7800_PSM_PERIODIC_TAU
+	string "Requested extended periodic TAU timer"
+	default "10000010"
+	help
+	  Requested extended periodic TAU (tracking area update) value (T3412)
+	  to be allocated to the UE in E-UTRAN. One byte in an 8-bit format.
+
+config MODEM_HL7800_PSM_ACTIVE_TIME
+	string "Requested active time"
+	default "00001111"
+	help
+	  Requested Active Time value (T3324) to be allocated to the UE.
+	  One byte in an 8-bit format.
+
+endif # MODEM_HL7800_PSM
+
+endif # MODEM_HL7800_LOW_POWER_MODE
+
 config MODEM_HL7800_RX_STACK_SIZE
 	int "Size of the stack for the HL7800 modem driver RX thread"
 	default 1024
