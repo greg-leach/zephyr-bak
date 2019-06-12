@@ -212,7 +212,7 @@ static const struct mdm_control_pinconfig pinconfig[] = {
 #define MDM_NETWORK_STATUS_LENGTH 45
 
 #define MDM_DEFAULT_AT_CMD_RETRIES 3
-#define MDM_WAKEUP_TIME K_SECONDS(20)
+#define MDM_WAKEUP_TIME K_SECONDS(12)
 #define MDM_BOOT_TIME K_SECONDS(12)
 
 #define MDM_WAIT_FOR_DATA_TIME K_MSEC(50)
@@ -627,6 +627,8 @@ static void allow_sleep(bool allow)
 		ictx.allowSleep = true;
 		modem_assert_wake(false);
 		modem_assert_uart_dtr(false);
+		k_sleep(K_MSEC(500));
+		ictx.sleepState = ASLEEP;
 	} else {
 		LOG_INF("Keep awake");
 		ictx.allowSleep = false;
@@ -1436,6 +1438,7 @@ static void iface_status_work_cb(struct k_work *work)
 	case HOME_NETWORK:
 	case ROAMING:
 		if (ictx.iface && !net_if_is_up(ictx.iface)) {
+			LOG_DBG("HL7800 iface UP");
 			/* bring the iface up */
 			net_if_up(ictx.iface);
 		}
@@ -1447,6 +1450,7 @@ static void iface_status_work_cb(struct k_work *work)
 			LOG_ERR("AT+COPS ret:%d", ret);
 			if (ictx.iface) {
 				/* bring the iface down */
+				LOG_DBG("HL7800 iface DOWN");
 				net_if_down(ictx.iface);
 			}
 			break;
@@ -1455,27 +1459,29 @@ static void iface_status_work_cb(struct k_work *work)
 		if (ictx.iface && !net_if_is_up(ictx.iface) &&
 		    ictx.operatorStatus == REGISTERED) {
 			/* bring the iface up */
+			LOG_DBG("HL7800 iface UP");
 			net_if_up(ictx.iface);
 		} else {
 			/* bring the iface down */
+			LOG_DBG("HL7800 iface DOWN");
 			net_if_down(ictx.iface);
 		}
 		break;
 	default:
 		if (ictx.iface && net_if_is_up(ictx.iface)) {
-			/* we dont care if removing IP fails */
-			net_if_ipv4_addr_rm(ictx.iface, &ictx.ipv4Addr);
+			LOG_DBG("HL7800 iface DOWN");
 			net_if_down(ictx.iface);
 		}
+		break;
+	}
+
+	if (ictx.iface && !net_if_is_up(ictx.iface)) {
 #ifndef CONFIG_MODEM_HL7800_LOW_POWER_MODE
 		/* stop periodic RSSI reading */
 		hl7800_stop_rssi_work();
 #endif
-		break;
-	}
-
-	/* get IP address info */
-	if (ictx.iface && net_if_is_up(ictx.iface)) {
+	} else if (ictx.iface && net_if_is_up(ictx.iface)) {
+		/* get IP address info */
 #ifndef CONFIG_MODEM_HL7800_LOW_POWER_MODE
 		/* start periodic RSSI reading */
 		hl7800_query_rssi();
@@ -2457,9 +2463,6 @@ static int hl7800_modem_reset(void)
 
 	waitForBoot();
 
-	/* SETUP THE MODEM */
-	LOG_INF("Setting up modem");
-
 	/* turn OFF echo */
 	ret = echoOff();
 	if (ret < 0) {
@@ -2515,27 +2518,6 @@ static int hl7800_modem_reset(void)
 			LOG_ERR("Echo off: %d", ret);
 			goto error;
 		}
-	}
-
-	/* Setup APN */
-	ret = send_at_cmd(NULL,
-			  "AT+CGDCONT=1,\"IP\",\"" CONFIG_MODEM_HL7800_APN_NAME
-			  "\"",
-			  MDM_CMD_SEND_TIMEOUT, MDM_DEFAULT_AT_CMD_RETRIES,
-			  false);
-	if (ret < 0) {
-		LOG_ERR("AT+CGDCONT ret:%d", ret);
-		goto error;
-	}
-
-	/* Setup GPRS connection */
-	ret = send_at_cmd(
-		NULL,
-		"AT+KCNXCFG=1,\"GPRS\",\"" CONFIG_MODEM_HL7800_APN_NAME "\"",
-		MDM_CMD_SEND_TIMEOUT, MDM_DEFAULT_AT_CMD_RETRIES, false);
-	if (ret < 0) {
-		LOG_ERR("AT+KCNXCFG ret:%d", ret);
-		goto error;
 	}
 
 #ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
@@ -2617,9 +2599,6 @@ static int hl7800_modem_reset(void)
 	}
 #endif
 
-	/* query modem info */
-	LOG_INF("Querying modem information");
-
 	/* modem manufacturer */
 	ret = send_at_cmd(NULL, "AT+CGMI", MDM_CMD_SEND_TIMEOUT,
 			  MDM_DEFAULT_AT_CMD_RETRIES, true);
@@ -2657,6 +2636,27 @@ static int hl7800_modem_reset(void)
 			  MDM_DEFAULT_AT_CMD_RETRIES, true);
 	if (ret < 0) {
 		LOG_ERR("AT+KGSN ret:%d", ret);
+		goto error;
+	}
+
+	/* Setup APN */
+	ret = send_at_cmd(NULL,
+			  "AT+CGDCONT=1,\"IP\",\"" CONFIG_MODEM_HL7800_APN_NAME
+			  "\"",
+			  MDM_CMD_SEND_TIMEOUT, MDM_DEFAULT_AT_CMD_RETRIES,
+			  false);
+	if (ret < 0) {
+		LOG_ERR("AT+CGDCONT ret:%d", ret);
+		goto error;
+	}
+
+	/* Setup GPRS connection */
+	ret = send_at_cmd(
+		NULL,
+		"AT+KCNXCFG=1,\"GPRS\",\"" CONFIG_MODEM_HL7800_APN_NAME "\"",
+		MDM_CMD_SEND_TIMEOUT, MDM_DEFAULT_AT_CMD_RETRIES, false);
+	if (ret < 0) {
+		LOG_ERR("AT+KCNXCFG ret:%d", ret);
 		goto error;
 	}
 
