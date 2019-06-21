@@ -1657,6 +1657,7 @@ static bool on_cmd_sock_ind(struct net_buf **buf, u16_t len)
 	}
 
 	id = strtol(value, NULL, 10);
+	LOG_DBG("+K**P_IND ID: %d", id);
 	sock = socket_from_id(id);
 	if (sock) {
 		k_sem_give(&sock->sock_send_sem);
@@ -1694,7 +1695,7 @@ static bool on_cmd_sock_error_code(struct net_buf **buf, u16_t len)
 	out_len = net_buf_linearize(value, sizeof(value), *buf, 0, len);
 	value[out_len] = 0;
 
-	LOG_ERR("Error code: %s", value);
+	LOG_ERR("Error code: %s", log_strdup(value));
 
 	ictx.last_error = -EIO;
 	sock = socket_from_id(ictx.last_socket_id);
@@ -1811,6 +1812,7 @@ static bool on_cmd_sockcreate(struct net_buf **buf, u16_t len)
 	out_len = net_buf_linearize(value, sizeof(value), *buf, 0, len);
 	value[out_len] = 0;
 	ictx.last_socket_id = strtol(value, NULL, 10);
+	LOG_DBG("+K**PCFG: %d", ictx.last_socket_id);
 
 	/* check if the socket has been created already */
 	sock = socket_from_id(ictx.last_socket_id);
@@ -2405,7 +2407,7 @@ void mdm_vgpio_callback(struct device *port, struct gpio_callback *cb,
 	ictx.vgpio_state = val;
 	if (!val) {
 		ictx.sleepState = ASLEEP;
-		if (ictx.iface) {
+		if (ictx.iface && ictx.initialized) {
 			/* bring the iface down */
 			net_if_down(ictx.iface);
 		}
@@ -3459,7 +3461,7 @@ static int hl7800_init(struct device *dev)
 	/* init RSSI query */
 	k_delayed_work_init(&ictx.rssi_query_work, hl7800_rssi_query_work);
 
-	hl7800_modem_reset();
+	ret = hl7800_modem_reset();
 
 	return ret;
 }
