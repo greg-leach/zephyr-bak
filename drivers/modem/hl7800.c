@@ -211,6 +211,13 @@ static const struct mdm_control_pinconfig pinconfig[] = {
 #define MDM_SN_RESPONSE_LENGTH MDM_SN_LENGTH + 7
 #define MDM_NETWORK_STATUS_LENGTH 45
 
+#define MDM_TOP_BAND_SIZE 4
+#define MDM_MIDDLE_BAND_SIZE 8
+#define MDM_BOTTOM_BAND_SIZE 8
+#define MDM_TOP_BAND_START_POSITION 2
+#define MDM_MIDDLE_BAND_START_POSITION 6
+#define MDM_BOTTOM_BAND_START_POSITION 14
+
 #define MDM_DEFAULT_AT_CMD_RETRIES 3
 #define MDM_WAKEUP_TIME K_SECONDS(12)
 #define MDM_BOOT_TIME K_SECONDS(12)
@@ -322,6 +329,9 @@ struct hl7800_iface_ctx {
 	char mdm_network_status[MDM_NETWORK_STATUS_LENGTH];
 	u8_t mdm_startup_state;
 	enum mdm_radio_mode mdm_rat;
+	u16_t mdm_bands_top;
+	u32_t mdm_bands_middle;
+	u32_t mdm_bands_bottom;
 
 	/* modem state */
 	bool allowSleep;
@@ -1366,6 +1376,43 @@ static bool on_cmd_radio_tech_status(struct net_buf **buf, u16_t len)
 	return true;
 }
 
+
+/* Handler: +KBNDCFG: #,####################### */
+static bool on_cmd_radio_band_configuration(struct net_buf **buf, u16_t len)
+{
+	size_t out_len;
+	char value[len + 1];
+	char nTmp[sizeof("#########")];
+
+	out_len = net_buf_linearize(value, sizeof(value) - 1, *buf, 0, len);
+	value[out_len] = 0;
+
+	if (value[0] != (ictx.mdm_rat == MDM_RAT_CAT_M1 ? '0' : '1')) {
+		//Invalid RAT
+		return true;
+	}
+	else if (strlen(value) < sizeof("#,###################")) {
+		//String size too short
+		return true;
+	}
+
+	memcpy(nTmp, &value[MDM_TOP_BAND_START_POSITION], MDM_TOP_BAND_SIZE);
+	nTmp[MDM_TOP_BAND_SIZE] = 0;
+	ictx.mdm_bands_top = strtoul(nTmp, NULL, 16);
+
+	memcpy(nTmp, &value[MDM_MIDDLE_BAND_START_POSITION], MDM_MIDDLE_BAND_SIZE);
+	nTmp[MDM_MIDDLE_BAND_SIZE] = 0;
+	ictx.mdm_bands_middle = strtoul(nTmp, NULL, 16);
+
+	memcpy(nTmp, &value[MDM_BOTTOM_BAND_START_POSITION], MDM_BOTTOM_BAND_SIZE);
+	nTmp[MDM_BOTTOM_BAND_SIZE] = 0;
+	ictx.mdm_bands_bottom = strtoul(nTmp, NULL, 16);
+
+	LOG_INF("Current band configuration: %04x %08x %08x", ictx.mdm_bands_bottom, ictx.mdm_bands_middle, ictx.mdm_bands_top);
+
+	return true;
+}
+
 /* Handler: +KSUP: # */
 static bool on_cmd_startup_report(struct net_buf **buf, u16_t len)
 {
@@ -2195,6 +2242,7 @@ static void hl7800_rx(void)
 		CMD_HANDLER("+CGCONTRDP: ", atcmdinfo_ipaddr),
 		CMD_HANDLER("+COPS: ", atcmdinfo_operator_status),
 		CMD_HANDLER("+KSRAT: ", radio_tech_status),
+		CMD_HANDLER("+KBNDCFG: ", radio_band_configuration),
 
 		/* UNSOLICITED modem information */
 		/* mobile startup report */
@@ -2519,6 +2567,125 @@ static int hl7800_modem_reset(void)
 			goto error;
 		}
 	}
+
+	/* Configure LTE bands */
+#if CONFIG_MODEM_HL7800_CONFIGURE_BANDS
+	u16_t bands_top = 0;
+	u32_t bands_middle = 0, bands_bottom = 0;
+
+#if CONFIG_MODEM_HL7800_BAND_1
+	bands_bottom |= 1 << 0;
+#endif
+#if CONFIG_MODEM_HL7800_BAND_2
+	bands_bottom |= 1 << 1;
+#endif
+#if CONFIG_MODEM_HL7800_BAND_3
+	bands_bottom |= 1 << 2;
+#endif
+#if CONFIG_MODEM_HL7800_BAND_4
+	bands_bottom |= 1 << 3;
+#endif
+#if CONFIG_MODEM_HL7800_BAND_5
+	bands_bottom |= 1 << 4;
+#endif
+#if CONFIG_MODEM_HL7800_BAND_8
+	bands_bottom |= 1 << 7;
+#endif
+#if CONFIG_MODEM_HL7800_BAND_9
+	bands_bottom |= 1 << 8;
+#endif
+#if CONFIG_MODEM_HL7800_BAND_10
+	bands_bottom |= 1 << 9;
+#endif
+#if CONFIG_MODEM_HL7800_BAND_12
+	bands_bottom |= 1 << 11;
+#endif
+#if CONFIG_MODEM_HL7800_BAND_13
+	bands_bottom |= 1 << 12;
+#endif
+#if CONFIG_MODEM_HL7800_BAND_14
+	bands_bottom |= 1 << 13;
+#endif
+#if CONFIG_MODEM_HL7800_BAND_17
+	bands_bottom |= 1 << 16;
+#endif
+#if CONFIG_MODEM_HL7800_BAND_18
+	bands_bottom |= 1 << 17;
+#endif
+#if CONFIG_MODEM_HL7800_BAND_19
+	bands_bottom |= 1 << 18;
+#endif
+#if CONFIG_MODEM_HL7800_BAND_20
+	bands_bottom |= 1 << 19;
+#endif
+#if CONFIG_MODEM_HL7800_BAND_25
+	bands_bottom |= 1 << 24;
+#endif
+#if CONFIG_MODEM_HL7800_BAND_26
+	bands_bottom |= 1 << 25;
+#endif
+#if CONFIG_MODEM_HL7800_BAND_27
+	bands_bottom |= 1 << 26;
+#endif
+#if CONFIG_MODEM_HL7800_BAND_28
+	bands_bottom |= 1 << 27;
+#endif
+#if CONFIG_MODEM_HL7800_BAND_66
+	bands_top    |= 1 << 1;
+#endif
+
+	ret = send_at_cmd(NULL, "AT+KBNDCFG?", MDM_CMD_SEND_TIMEOUT,
+			  MDM_DEFAULT_AT_CMD_RETRIES, false);
+	if (ret < 0) {
+		LOG_ERR("AT+KBNDCFG? ret:%d", ret);
+		goto error;
+	}
+
+	/* Check if bands are configured correctly */
+	if (ictx.mdm_bands_top != bands_top || ictx.mdm_bands_middle != bands_middle || ictx.mdm_bands_bottom != bands_bottom) {
+		if (ictx.mdm_bands_top != bands_top) {
+			LOG_INF("Top band mismatch, want %04x got %04x", bands_top, ictx.mdm_bands_top);
+		}
+		if (ictx.mdm_bands_middle != bands_middle) {
+			LOG_INF("Middle band mismatch, want %08x got %08x", bands_middle, ictx.mdm_bands_middle);
+		}
+		if (ictx.mdm_bands_bottom != bands_bottom) {
+			LOG_INF("Bottom band mismatch, want %08x got %08x", bands_bottom, ictx.mdm_bands_bottom);
+		}
+
+		char newBands[sizeof("AT+KBNDCFG=#,####################")];
+		snprintk(newBands, sizeof(newBands), "AT+KBNDCFG=%d,%04x%08x%08x",
+			 ictx.mdm_rat, bands_top, bands_middle, bands_bottom);
+
+		ret = send_at_cmd(NULL,
+				  newBands,
+				  MDM_CMD_SEND_TIMEOUT, MDM_DEFAULT_AT_CMD_RETRIES,
+				  false);
+		if (ret < 0) {
+			LOG_ERR("AT+KBNDCFG ret:%d", ret);
+			goto error;
+		}
+
+		ret = send_at_cmd(NULL,
+				  "AT+CFUN=1,1",
+				  MDM_CMD_SEND_TIMEOUT, MDM_DEFAULT_AT_CMD_RETRIES,
+				  false);
+		if (ret < 0) {
+			LOG_ERR("AT+CFUN ret:%d", ret);
+			goto error;
+		}
+
+		/* LTE bands were just set, wait for reboot */
+		waitForBoot();
+
+		/* turn OFF echo after reboot because it is volatile */
+		ret = echoOff();
+		if (ret < 0) {
+			LOG_ERR("Echo off: %d", ret);
+			goto error;
+		}
+	}
+#endif
 
 #ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
 	/* Turn on sleep mode */
