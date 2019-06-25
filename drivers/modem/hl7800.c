@@ -1376,7 +1376,6 @@ static bool on_cmd_radio_tech_status(struct net_buf **buf, u16_t len)
 	return true;
 }
 
-
 /* Handler: +KBNDCFG: #,####################### */
 static bool on_cmd_radio_band_configuration(struct net_buf **buf, u16_t len)
 {
@@ -1390,8 +1389,7 @@ static bool on_cmd_radio_band_configuration(struct net_buf **buf, u16_t len)
 	if (value[0] != (ictx.mdm_rat == MDM_RAT_CAT_M1 ? '0' : '1')) {
 		//Invalid RAT
 		return true;
-	}
-	else if (strlen(value) < sizeof("#,###################")) {
+	} else if (strlen(value) < sizeof("#,###################")) {
 		//String size too short
 		return true;
 	}
@@ -1400,15 +1398,19 @@ static bool on_cmd_radio_band_configuration(struct net_buf **buf, u16_t len)
 	nTmp[MDM_TOP_BAND_SIZE] = 0;
 	ictx.mdm_bands_top = strtoul(nTmp, NULL, 16);
 
-	memcpy(nTmp, &value[MDM_MIDDLE_BAND_START_POSITION], MDM_MIDDLE_BAND_SIZE);
+	memcpy(nTmp, &value[MDM_MIDDLE_BAND_START_POSITION],
+	       MDM_MIDDLE_BAND_SIZE);
 	nTmp[MDM_MIDDLE_BAND_SIZE] = 0;
 	ictx.mdm_bands_middle = strtoul(nTmp, NULL, 16);
 
-	memcpy(nTmp, &value[MDM_BOTTOM_BAND_START_POSITION], MDM_BOTTOM_BAND_SIZE);
+	memcpy(nTmp, &value[MDM_BOTTOM_BAND_START_POSITION],
+	       MDM_BOTTOM_BAND_SIZE);
 	nTmp[MDM_BOTTOM_BAND_SIZE] = 0;
 	ictx.mdm_bands_bottom = strtoul(nTmp, NULL, 16);
 
-	LOG_INF("Current band configuration: %04x %08x %08x", ictx.mdm_bands_bottom, ictx.mdm_bands_middle, ictx.mdm_bands_top);
+	LOG_INF("Current band configuration: %04x %08x %08x",
+		ictx.mdm_bands_top, ictx.mdm_bands_middle,
+		ictx.mdm_bands_bottom);
 
 	return true;
 }
@@ -2633,7 +2635,7 @@ static int hl7800_modem_reset(void)
 	bands_bottom |= 1 << 27;
 #endif
 #if CONFIG_MODEM_HL7800_BAND_66
-	bands_top    |= 1 << 1;
+	bands_top |= 1 << 1;
 #endif
 
 	ret = send_at_cmd(NULL, "AT+KBNDCFG?", MDM_CMD_SEND_TIMEOUT,
@@ -2644,34 +2646,36 @@ static int hl7800_modem_reset(void)
 	}
 
 	/* Check if bands are configured correctly */
-	if (ictx.mdm_bands_top != bands_top || ictx.mdm_bands_middle != bands_middle || ictx.mdm_bands_bottom != bands_bottom) {
+	if (ictx.mdm_bands_top != bands_top ||
+	    ictx.mdm_bands_middle != bands_middle ||
+	    ictx.mdm_bands_bottom != bands_bottom) {
 		if (ictx.mdm_bands_top != bands_top) {
-			LOG_INF("Top band mismatch, want %04x got %04x", bands_top, ictx.mdm_bands_top);
+			LOG_INF("Top band mismatch, want %04x got %04x",
+				bands_top, ictx.mdm_bands_top);
 		}
 		if (ictx.mdm_bands_middle != bands_middle) {
-			LOG_INF("Middle band mismatch, want %08x got %08x", bands_middle, ictx.mdm_bands_middle);
+			LOG_INF("Middle band mismatch, want %08x got %08x",
+				bands_middle, ictx.mdm_bands_middle);
 		}
 		if (ictx.mdm_bands_bottom != bands_bottom) {
-			LOG_INF("Bottom band mismatch, want %08x got %08x", bands_bottom, ictx.mdm_bands_bottom);
+			LOG_INF("Bottom band mismatch, want %08x got %08x",
+				bands_bottom, ictx.mdm_bands_bottom);
 		}
 
 		char newBands[sizeof("AT+KBNDCFG=#,####################")];
-		snprintk(newBands, sizeof(newBands), "AT+KBNDCFG=%d,%04x%08x%08x",
-			 ictx.mdm_rat, bands_top, bands_middle, bands_bottom);
+		snprintk(newBands, sizeof(newBands),
+			 "AT+KBNDCFG=%d,%04x%08x%08x", ictx.mdm_rat, bands_top,
+			 bands_middle, bands_bottom);
 
-		ret = send_at_cmd(NULL,
-				  newBands,
-				  MDM_CMD_SEND_TIMEOUT, MDM_DEFAULT_AT_CMD_RETRIES,
-				  false);
+		ret = send_at_cmd(NULL, newBands, MDM_CMD_SEND_TIMEOUT,
+				  MDM_DEFAULT_AT_CMD_RETRIES, false);
 		if (ret < 0) {
 			LOG_ERR("AT+KBNDCFG ret:%d", ret);
 			goto error;
 		}
 
-		ret = send_at_cmd(NULL,
-				  "AT+CFUN=1,1",
-				  MDM_CMD_SEND_TIMEOUT, MDM_DEFAULT_AT_CMD_RETRIES,
-				  false);
+		ret = send_at_cmd(NULL, "AT+CFUN=1,1", MDM_CMD_SEND_TIMEOUT,
+				  MDM_DEFAULT_AT_CMD_RETRIES, false);
 		if (ret < 0) {
 			LOG_ERR("AT+CFUN ret:%d", ret);
 			goto error;
