@@ -227,6 +227,7 @@ static const struct mdm_control_pinconfig pinconfig[] = {
 #define MDM_WAIT_FOR_DATA_RETRIES 3
 
 #define RSSI_TIMEOUT_SECS 30
+#define RSSI_UNKNOWN -999
 
 #define DNS_WORK_DELAY_SECS 1
 
@@ -1583,7 +1584,7 @@ static bool on_cmd_network_report(struct net_buf **buf, u16_t len)
 static int convert_rsrp_to_dbm(int rsrp)
 {
 	if (rsrp == 255) {
-		return -999;
+		return RSSI_UNKNOWN;
 	} else {
 		return rsrp - 141;
 	}
@@ -1617,7 +1618,11 @@ static bool on_cmd_atcmdinfo_rssi(struct net_buf **buf, u16_t len)
 	/* the 5th ',' (last in the msg) is the start of the rssi */
 	ictx.mdm_ctx.data_rssi =
 		convert_rsrp_to_dbm(strtol(delims[4] + 1, NULL, 10));
-	LOG_INF("RSSI: %d", ictx.mdm_ctx.data_rssi);
+	if (ictx.mdm_ctx.data_rssi == RSSI_UNKNOWN) {
+		LOG_INF("RSSI: UNKNOWN");
+	} else {
+		LOG_INF("RSSI: %d", ictx.mdm_ctx.data_rssi);
+	}
 done:
 	return true;
 }
