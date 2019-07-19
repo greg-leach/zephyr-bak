@@ -21,7 +21,7 @@ if MODEM_HL7800
 
 config MODEM_HL7800_APN_NAME
 	string "APN name for establishing network connection"
-	default "internet"
+	default ""
 	help
 	  This setting is used in the AT+KCNXCFG command to set the APN name
 	  for the network connection context.
