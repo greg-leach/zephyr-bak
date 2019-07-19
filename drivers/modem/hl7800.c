@@ -48,9 +48,9 @@ LOG_MODULE_REGISTER(LOG_DOMAIN);
 /* #define HL7800_DEBUG_WAKE_IO 1 */
 
 enum sleep_state {
-	ASLEEP,
-	WAKING,
-	AWAKE,
+	HL7800_STATE_ASLEEP,
+	HL7800_STATE_WAKING,
+	HL7800_STATE_AWAKE,
 };
 
 enum tcp_notif {
@@ -640,7 +640,7 @@ static void allow_sleep(bool allow)
 		modem_assert_wake(false);
 		modem_assert_uart_dtr(false);
 		k_sleep(K_MSEC(500));
-		ictx.sleepState = ASLEEP;
+		ictx.sleepState = HL7800_STATE_ASLEEP;
 	} else {
 		LOG_INF("Keep awake");
 		ictx.allowSleep = false;
@@ -712,7 +712,7 @@ static int wakeup_hl7800(void)
 {
 	int ret;
 	allow_sleep(false);
-	if (ictx.sleepState != AWAKE) {
+	if (ictx.sleepState != HL7800_STATE_AWAKE) {
 		k_sem_reset(&ictx.mdm_awake);
 		LOG_DBG("Waiting to wakeup");
 		ret = k_sem_take(&ictx.mdm_awake, MDM_WAKEUP_TIME);
@@ -1423,7 +1423,7 @@ static bool on_cmd_startup_report(struct net_buf **buf, u16_t len)
 	size_t out_len;
 	char value[len + 1];
 
-	ictx.sleepState = AWAKE;
+	ictx.sleepState = HL7800_STATE_AWAKE;
 	k_sem_give(&ictx.mdm_awake);
 	out_len = net_buf_linearize(value, sizeof(value) - 1, *buf, 0, len);
 	value[out_len] = 0;
@@ -2414,13 +2414,13 @@ void mdm_vgpio_callback(struct device *port, struct gpio_callback *cb,
 		      &val);
 	ictx.vgpio_state = val;
 	if (!val) {
-		ictx.sleepState = ASLEEP;
+		ictx.sleepState = HL7800_STATE_ASLEEP;
 		if (ictx.iface && ictx.initialized) {
 			/* bring the iface down */
 			net_if_down(ictx.iface);
 		}
 	} else {
-		ictx.sleepState = WAKING;
+		ictx.sleepState = HL7800_STATE_WAKING;
 	}
 
 	LOG_DBG("VGPIO:%d", val);
@@ -2433,12 +2433,6 @@ void mdm_uart_dsr_callback(struct device *port, struct gpio_callback *cb,
 	gpio_pin_read(ictx.gpio_port_dev[MDM_UART_DSR],
 		      pinconfig[MDM_UART_DSR].pin, &val);
 	ictx.dsr_state = val;
-	if (ictx.sleepState == WAKING && !val) {
-		ictx.sleepState = AWAKE;
-		k_sem_give(&ictx.mdm_awake);
-	} else if (val && ictx.sleepState == AWAKE) {
-		ictx.sleepState = WAKING;
-	}
 
 	LOG_DBG("MDM_UART_DSR:%d", val);
 }
@@ -2468,7 +2462,7 @@ static int modem_reset(bool keepAwake)
 		       MDM_RESET_NOT_ASSERTED);
 
 	/* Flag the modem as asleep until it is fully booted */
-	ictx.sleepState = ASLEEP;
+	ictx.sleepState = HL7800_STATE_ASLEEP;
 	if (keepAwake) {
 		allow_sleep(false);
 	}
