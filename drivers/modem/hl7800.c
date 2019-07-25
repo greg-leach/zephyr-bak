@@ -231,6 +231,7 @@ static const struct mdm_control_pinconfig pinconfig[] = {
 #define RSSI_UNKNOWN -999
 
 #define DNS_WORK_DELAY_SECS 1
+#define IFACE_WORK_DELAY K_MSEC(500)
 
 NET_BUF_POOL_DEFINE(mdm_recv_pool, MDM_RECV_MAX_BUF, MDM_RECV_BUF_SIZE, 0,
 		    NULL);
@@ -318,7 +319,7 @@ struct hl7800_iface_ctx {
 	struct k_delayed_work rssi_query_work;
 
 	/* work */
-	struct k_work iface_status_work;
+	struct k_delayed_work iface_status_work;
 	struct k_delayed_work dns_work;
 
 	/* modem info */
@@ -1259,7 +1260,7 @@ static bool on_cmd_atcmdinfo_ipaddr(struct net_buf **buf, u16_t len)
 		net_ipaddr_copy(&ictx.ipv4Addr, &newIpv4Addr);
 
 		/* start DNS update work */
-		s32_t delay = 0;
+		s32_t delay = K_NO_WAIT;
 		if (!ictx.initialized) {
 			/* Delay this in case the network
 			*  stack is still starting up */
@@ -1576,7 +1577,10 @@ static bool on_cmd_network_report(struct net_buf **buf, u16_t len)
 
 	if (ictx.initialized && !ictx.restarting) {
 		/* start work to adjust iface */
-		k_work_submit_to_queue(&hl7800_workq, &ictx.iface_status_work);
+		k_delayed_work_cancel(&ictx.iface_status_work);
+		k_delayed_work_submit_to_queue(&hl7800_workq,
+					       &ictx.iface_status_work,
+					       IFACE_WORK_DELAY);
 	}
 
 	return true;
@@ -2874,7 +2878,9 @@ s32_t mdm_hl7800_reset(void)
 	ret = hl7800_modem_reset();
 	if (ret == 0) {
 		/* update the iface status after reset */
-		k_work_submit_to_queue(&hl7800_workq, &ictx.iface_status_work);
+		k_delayed_work_cancel(&ictx.iface_status_work);
+		k_delayed_work_submit_to_queue(
+			&hl7800_workq, &ictx.iface_status_work, K_NO_WAIT);
 	}
 
 	hl7800_unlock();
@@ -3370,7 +3376,7 @@ static int hl7800_init(struct device *dev)
 		       K_THREAD_STACK_SIZEOF(hl7800_workq_stack),
 		       WORKQ_PRIORITY);
 
-	k_work_init(&ictx.iface_status_work, iface_status_work_cb);
+	k_delayed_work_init(&ictx.iface_status_work, iface_status_work_cb);
 	k_delayed_work_init(&ictx.dns_work, dns_work_cb);
 
 	ictx.last_socket_id = 0;
