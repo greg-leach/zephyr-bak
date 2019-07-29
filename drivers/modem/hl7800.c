@@ -9,6 +9,7 @@
 #include <logging/log.h>
 LOG_MODULE_REGISTER(LOG_DOMAIN);
 
+#include <kernel.h>
 #include <zephyr/types.h>
 #include <stddef.h>
 #include <stdlib.h>
@@ -18,6 +19,7 @@ LOG_MODULE_REGISTER(LOG_DOMAIN);
 #include <gpio.h>
 #include <device.h>
 #include <init.h>
+#include <stdlib.h>
 
 #include <net/net_if.h>
 #include <net/net_context.h>
@@ -53,35 +55,45 @@ enum sleep_state {
 	HL7800_STATE_AWAKE,
 };
 
+enum hl7800_network_state {
+	HL7800_NOT_REGISTERED = 0,
+	HL7800_HOME_NETWORK,
+	HL7800_SEARCHING,
+	HL7800_REG_DENIED,
+	HL7800_OUT_OF_COVERAGE,
+	HL7800_ROAMING,
+	HL7800_EMERGENCY = 8,
+};
+
 enum tcp_notif {
-	TCP_NET_ERR,
-	TCP_NO_SOCKS,
-	TCP_MEM,
-	TCP_DNS,
-	TCP_DISCON,
-	TCP_CONN,
-	TCP_ERR,
-	TCP_CLIENT_REQ,
-	TCP_DATA_SND,
-	TCP_ID,
-	TCP_RUNNING,
-	TCP_ALL_USED,
-	TCP_TIMEOUT,
-	TCP_SSL_CONN,
-	TCP_SSL_INIT
+	HL7800_TCP_NET_ERR,
+	HL7800_TCP_NO_SOCKS,
+	HL7800_TCP_MEM,
+	HL7800_TCP_DNS,
+	HL7800_TCP_DISCON,
+	HL7800_TCP_CONN,
+	HL7800_TCP_ERR,
+	HL7800_TCP_CLIENT_REQ,
+	HL7800_TCP_DATA_SND,
+	HL7800_TCP_ID,
+	HL7800_TCP_RUNNING,
+	HL7800_TCP_ALL_USED,
+	HL7800_TCP_TIMEOUT,
+	HL7800_TCP_SSL_CONN,
+	HL7800_TCP_SSL_INIT
 };
 
 enum udp_notif {
-	UDP_NET_ERR = 0,
-	UDP_NO_SOCKS = 1,
-	UDP_MEM = 2,
-	UDP_DNS = 3,
-	UDP_CONN = 5,
-	UDP_ERR = 6,
-	UDP_DATA_SND = 8, /* this matches TCP_DATA_SND */
-	UDP_ID = 9,
-	UDP_RUNNING = 10,
-	UDP_ALL_USED = 11
+	HL7800_UDP_NET_ERR = 0,
+	HL7800_UDP_NO_SOCKS = 1,
+	HL7800_UDP_MEM = 2,
+	HL7800_UDP_DNS = 3,
+	HL7800_UDP_CONN = 5,
+	HL7800_UDP_ERR = 6,
+	HL7800_UDP_DATA_SND = 8, /* this matches TCP_DATA_SND */
+	HL7800_UDP_ID = 9,
+	HL7800_UDP_RUNNING = 10,
+	HL7800_UDP_ALL_USED = 11
 };
 
 enum socket_state { SOCK_IDLE, SOCK_RX, SOCK_TX };
@@ -335,6 +347,7 @@ struct hl7800_iface_ctx {
 	u16_t mdm_bands_top;
 	u32_t mdm_bands_middle;
 	u32_t mdm_bands_bottom;
+	s32_t mdm_sinr;
 
 	/* modem state */
 	bool allowSleep;
@@ -648,6 +661,12 @@ static void allow_sleep(bool allow)
 		modem_assert_wake(true);
 		modem_assert_uart_dtr(true);
 	}
+}
+
+void mdm_hl7800_get_signal_quality(int *rsrp, int *sinr)
+{
+	*rsrp = ictx.mdm_ctx.data_rssi;
+	*sinr = ictx.mdm_sinr;
 }
 
 void mdm_hl7800_wakeup(bool wakeup)
@@ -1437,9 +1456,10 @@ static bool on_cmd_startup_report(struct net_buf **buf, u16_t len)
 static int hl7800_query_rssi(void)
 {
 	int ret;
-	ret = send_at_cmd(NULL, "AT+CESQ", MDM_CMD_SEND_TIMEOUT, 1, false);
+	ret = send_at_cmd(NULL, "AT+KCELLMEAS=0", MDM_CMD_SEND_TIMEOUT, 1,
+			  false);
 	if (ret < 0) {
-		LOG_ERR("AT+CESQ ret:%d", ret);
+		LOG_ERR("AT+KCELLMEAS ret:%d", ret);
 	}
 	return ret;
 }
@@ -1487,15 +1507,15 @@ static void iface_status_work_cb(struct k_work *work)
 #endif
 	/* bring iface up/down */
 	switch (ictx.networkState) {
-	case HOME_NETWORK:
-	case ROAMING:
+	case HL7800_HOME_NETWORK:
+	case HL7800_ROAMING:
 		if (ictx.iface && !net_if_is_up(ictx.iface)) {
 			LOG_DBG("HL7800 iface UP");
 			/* bring the iface up */
 			net_if_up(ictx.iface);
 		}
 		break;
-	case OUT_OF_COVERAGE:
+	case HL7800_OUT_OF_COVERAGE:
 		ret = send_at_cmd(NULL, "AT+COPS?", MDM_CMD_SEND_TIMEOUT, 0,
 				  false);
 		if (ret < 0) {
@@ -1586,20 +1606,13 @@ static bool on_cmd_network_report(struct net_buf **buf, u16_t len)
 	return true;
 }
 
-static int convert_rsrp_to_dbm(int rsrp)
-{
-	if (rsrp == 255) {
-		return RSSI_UNKNOWN;
-	} else {
-		return rsrp - 141;
-	}
-}
-
-/* Handler: +CESQ: 99,99,255,255,32,31 */
+/* Handler: +KCELLMEAS: <RSRP>,<Downlink Path Loss>,<PUSCH Tx Power>,
+*                       <PUCCH Tx Power>,<SiNR>
+*/
 static bool on_cmd_atcmdinfo_rssi(struct net_buf **buf, u16_t len)
 {
 	/* number of ',' delimiters in this response */
-	int numDelims = 5;
+	int numDelims = 4;
 	char *delims[numDelims];
 	size_t out_len;
 	char value[len + 1];
@@ -1620,13 +1633,18 @@ static bool on_cmd_atcmdinfo_rssi(struct net_buf **buf, u16_t len)
 		/* Start next search after current delim location */
 		searchStart = delims[i] + 1;
 	}
-	/* the 5th ',' (last in the msg) is the start of the rssi */
-	ictx.mdm_ctx.data_rssi =
-		convert_rsrp_to_dbm(strtol(delims[4] + 1, NULL, 10));
-	if (ictx.mdm_ctx.data_rssi == RSSI_UNKNOWN) {
-		LOG_INF("RSSI: UNKNOWN");
+	/* the first value in the message is the RSRP */
+	ictx.mdm_ctx.data_rssi = strtol(value, NULL, 10);
+	/* the 4th ',' (last in the msg) is the start of the SINR */
+	ictx.mdm_sinr = strtol(delims[3] + 1, NULL, 10);
+	if ((delims[1] - delims[0]) == 1) {
+		/* there is no value between the first and second
+		*  delimiter, signal is unknown 
+		*/
+		LOG_INF("RSSI (RSRP): UNKNOWN");
 	} else {
-		LOG_INF("RSSI: %d", ictx.mdm_ctx.data_rssi);
+		LOG_INF("RSSI (RSRP): %d SINR: %d", ictx.mdm_ctx.data_rssi,
+			ictx.mdm_sinr);
 	}
 done:
 	return true;
@@ -1771,11 +1789,11 @@ static bool on_cmd_sock_notif(struct net_buf **buf, u16_t len)
 
 	notifVal = strtol(delim + 1, NULL, 10);
 	switch (notifVal) {
-	case TCP_DATA_SND:
+	case HL7800_TCP_DATA_SND:
 		err = false;
 		ictx.last_error = 0;
 		break;
-	case TCP_DISCON:
+	case HL7800_TCP_DISCON:
 		triggerSem = false;
 		err = true;
 		ictx.last_error = -EIO;
@@ -2252,7 +2270,7 @@ static void hl7800_rx(void)
 		CMD_HANDLER("AT+CGMR", atcmdinfo_revision),
 		CMD_HANDLER("AT+CGSN", atcmdinfo_imei),
 		CMD_HANDLER("AT+KGSN=3", atcmdinfo_serial_number),
-		CMD_HANDLER("+CESQ: ", atcmdinfo_rssi),
+		CMD_HANDLER("+KCELLMEAS: ", atcmdinfo_rssi),
 		CMD_HANDLER("+CGCONTRDP: ", atcmdinfo_ipaddr),
 		CMD_HANDLER("+COPS: ", atcmdinfo_operator_status),
 		CMD_HANDLER("+KSRAT: ", radio_tech_status),
