@@ -54,6 +54,12 @@ s32_t mdm_hl7800_send_at_cmd(const u8_t *data);
  */
 void mdm_hl7800_get_signal_quality(int *rsrp, int *sinr);
 
+/**
+ * @brief Get the SIM card ICCID
+ * 
+ */
+char *mdm_hl7800_get_iccid(void);
+
 #ifdef __cplusplus
 }
 #endif

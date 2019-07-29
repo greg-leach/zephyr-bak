@@ -223,6 +223,7 @@ static const struct mdm_control_pinconfig pinconfig[] = {
 #define MDM_SN_LENGTH 15
 #define MDM_SN_RESPONSE_LENGTH MDM_SN_LENGTH + 7
 #define MDM_NETWORK_STATUS_LENGTH 45
+#define MDM_ICCID_LENGTH 20
 
 #define MDM_TOP_BAND_SIZE 4
 #define MDM_MIDDLE_BAND_SIZE 8
@@ -342,6 +343,7 @@ struct hl7800_iface_ctx {
 	char mdm_imei[MDM_IMEI_LENGTH];
 	char mdm_sn[MDM_SN_LENGTH];
 	char mdm_network_status[MDM_NETWORK_STATUS_LENGTH];
+	char mdm_iccid[MDM_ICCID_LENGTH + 1];
 	u8_t mdm_startup_state;
 	enum mdm_radio_mode mdm_rat;
 	u16_t mdm_bands_top;
@@ -1155,6 +1157,41 @@ done:
 	return true;
 }
 
+/* Handler: +CCID: <ICCID> */
+static bool on_cmd_atcmdinfo_iccid(struct net_buf **buf, u16_t len)
+{
+	struct net_buf *frag = NULL;
+	u16_t offset;
+	size_t out_len;
+	int len_no_null = MDM_ICCID_LENGTH;
+
+	/* make sure ICCID data is received
+	*  waiting for: <ICCID>\r\n
+	*/
+	waitForModemData(buf, net_buf_frags_len(*buf), MDM_ICCID_LENGTH);
+
+	frag = NULL;
+	len = net_buf_findcrlf(*buf, &frag, &offset);
+	if (!frag) {
+		LOG_ERR("Unable to find ICCID end");
+		goto done;
+	}
+	if (len < len_no_null) {
+		LOG_WRN("ICCID too short (len:%d)", len);
+	} else if (len > len_no_null) {
+		LOG_WRN("ICCID too long (len:%d)", len);
+		len = MDM_ICCID_LENGTH;
+	}
+
+	out_len = net_buf_linearize(ictx.mdm_iccid, MDM_ICCID_LENGTH, *buf, 0,
+				    len);
+	ictx.mdm_iccid[out_len] = 0;
+
+	LOG_INF("ICCID: %s", ictx.mdm_iccid);
+done:
+	return true;
+}
+
 static void dns_work_cb(struct k_work *work)
 {
 #ifdef CONFIG_DNS_RESOLVER
@@ -1169,6 +1206,11 @@ static void dns_work_cb(struct k_work *work)
 		return;
 	}
 #endif
+}
+
+char *mdm_hl7800_get_iccid(void)
+{
+	return ictx.mdm_iccid;
 }
 
 /* Handler: +CGCONTRDP: <cid>,<bearer_id>,<apn>,<local_addr and subnet_mask>,
@@ -2275,6 +2317,7 @@ static void hl7800_rx(void)
 		CMD_HANDLER("+COPS: ", atcmdinfo_operator_status),
 		CMD_HANDLER("+KSRAT: ", radio_tech_status),
 		CMD_HANDLER("+KBNDCFG: ", radio_band_configuration),
+		CMD_HANDLER("+CCID: ", atcmdinfo_iccid),
 
 		/* UNSOLICITED modem information */
 		/* mobile startup report */
@@ -2831,6 +2874,14 @@ static int hl7800_modem_reset(void)
 			  MDM_DEFAULT_AT_CMD_RETRIES, true);
 	if (ret < 0) {
 		LOG_ERR("AT+KGSN ret:%d", ret);
+		goto error;
+	}
+
+	/* query SIM ICCID */
+	ret = send_at_cmd(NULL, "AT+CCID?", MDM_CMD_SEND_TIMEOUT,
+			  MDM_DEFAULT_AT_CMD_RETRIES, false);
+	if (ret < 0) {
+		LOG_ERR("AT+CCID? ret:%d", ret);
 		goto error;
 	}
 
