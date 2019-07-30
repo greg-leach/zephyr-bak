@@ -60,6 +60,13 @@ void mdm_hl7800_get_signal_quality(int *rsrp, int *sinr);
  */
 char *mdm_hl7800_get_iccid(void);
 
+/**
+ * @brief Get the HL7800 serial number
+ * 
+ */
+char *mdm_hl7800_get_sn(void);
+
+
 #ifdef __cplusplus
 }
 #endif

@@ -1213,6 +1213,11 @@ char *mdm_hl7800_get_iccid(void)
 	return ictx.mdm_iccid;
 }
 
+char *mdm_hl7800_get_sn(void)
+{
+	return ictx.mdm_sn;
+}
+
 /* Handler: +CGCONTRDP: <cid>,<bearer_id>,<apn>,<local_addr and subnet_mask>,
 *			<gw_addr>,<DNS_prim_addr>,<DNS_sec_addr> */
 static bool on_cmd_atcmdinfo_ipaddr(struct net_buf **buf, u16_t len)
