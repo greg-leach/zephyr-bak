@@ -45,22 +45,32 @@ properties:
       category: required
       generation: define, use-prop-name
 
-    mdm-lte-tx-on-gpios:
-      type: compound
-      category: required
-      generation: define, use-prop-name
-
-    mdm-gps-ext-lna-en-gpios:
-      type: compound
-      category: required
-      generation: define, use-prop-name
-
     mdm-vgpio-gpios:
       type: compound
       category: required
       generation: define, use-prop-name
 
     mdm-uart-dsr-gpios:
+      type: compound
+      category: required
+      generation: define, use-prop-name
+
+    mdm-uart-tx-gpios:
+      type: compound
+      category: required
+      generation: define, use-prop-name
+
+    mdm-uart-rts-gpios:
+      type: compound
+      category: required
+      generation: define, use-prop-name
+
+    mdm-uart-rx-gpios:
+      type: compound
+      category: required
+      generation: define, use-prop-name
+
+    mdm-uart-cts-gpios:
       type: compound
       category: required
       generation: define, use-prop-name

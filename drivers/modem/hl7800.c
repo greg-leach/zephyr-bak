@@ -20,6 +20,7 @@ LOG_MODULE_REGISTER(LOG_DOMAIN);
 #include <device.h>
 #include <init.h>
 #include <stdlib.h>
+#include <power.h>
 
 #include <net/net_if.h>
 #include <net/net_context.h>
@@ -102,11 +103,13 @@ struct mdm_control_pinconfig {
 	char *dev_name;
 	u32_t pin;
 	int config;
+	int sleep_config;
 };
 
-#define PINCONFIG(name_, pin_, config_)                                        \
+#define PINCONFIG(name_, pin_, config_, sleep_config_)                         \
 	{                                                                      \
-		.dev_name = name_, .pin = pin_, .config = config_              \
+		.dev_name = name_, .pin = pin_, .config = config_,             \
+		.sleep_config = sleep_config_                                  \
 	}
 
 /* pin settings */
@@ -116,10 +119,12 @@ enum mdm_control_pins {
 	MDM_PWR_ON,
 	MDM_FAST_SHUTD,
 	MDM_UART_DTR,
-	MDM_LTE_TX_ON,
-	MDM_GPS_EXT_LNA_EN,
 	MDM_VGPIO,
 	MDM_UART_DSR,
+	MDM_UART_TX,
+	MDM_UART_RTS,
+	MDM_UART_RX,
+	MDM_UART_CTS,
 	MAX_MDM_CONTROL_PINS,
 };
 
@@ -131,42 +136,38 @@ static const struct mdm_control_pinconfig pinconfig[] = {
 	/* MDM_RESET */
 	PINCONFIG(DT_INST_0_SWI_HL7800_MDM_RESET_GPIOS_CONTROLLER,
 		  DT_INST_0_SWI_HL7800_MDM_RESET_GPIOS_PIN,
+		  (GPIO_DIR_OUT | GPIO_DS_DISCONNECT_HIGH),
 		  (GPIO_DIR_OUT | GPIO_DS_DISCONNECT_HIGH)),
 
 	/* MDM_WAKE */
 	PINCONFIG(DT_INST_0_SWI_HL7800_MDM_WAKE_GPIOS_CONTROLLER,
 		  DT_INST_0_SWI_HL7800_MDM_WAKE_GPIOS_PIN,
+		  (GPIO_DIR_OUT | GPIO_DS_DISCONNECT_LOW),
 		  (GPIO_DIR_OUT | GPIO_DS_DISCONNECT_LOW)),
 
 	/* MDM_PWR_ON */
 	PINCONFIG(DT_INST_0_SWI_HL7800_MDM_PWR_ON_GPIOS_CONTROLLER,
 		  DT_INST_0_SWI_HL7800_MDM_PWR_ON_GPIOS_PIN,
+		  (GPIO_DIR_OUT | GPIO_DS_DISCONNECT_HIGH),
 		  (GPIO_DIR_OUT | GPIO_DS_DISCONNECT_HIGH)),
 
 	/* MDM_FAST_SHUTD */
 	PINCONFIG(DT_INST_0_SWI_HL7800_MDM_FAST_SHUTD_GPIOS_CONTROLLER,
 		  DT_INST_0_SWI_HL7800_MDM_FAST_SHUTD_GPIOS_PIN,
+		  (GPIO_DIR_OUT | GPIO_DS_DISCONNECT_HIGH),
 		  (GPIO_DIR_OUT | GPIO_DS_DISCONNECT_HIGH)),
 
 	/* MDM_UART_DTR */
 	PINCONFIG(DT_INST_0_SWI_HL7800_MDM_UART_DTR_GPIOS_CONTROLLER,
 		  DT_INST_0_SWI_HL7800_MDM_UART_DTR_GPIOS_PIN,
+		  (GPIO_DIR_OUT | GPIO_DS_DISCONNECT_HIGH),
 		  (GPIO_DIR_OUT | GPIO_DS_DISCONNECT_HIGH)),
-
-	/* MDM_LTE_TX_ON */
-	PINCONFIG(DT_INST_0_SWI_HL7800_MDM_LTE_TX_ON_GPIOS_CONTROLLER,
-		  DT_INST_0_SWI_HL7800_MDM_LTE_TX_ON_GPIOS_PIN,
-		  (GPIO_DIR_IN | GPIO_INT | GPIO_INT_EDGE |
-		   GPIO_INT_DOUBLE_EDGE)),
-
-	/* MDM_GPS_EXT_LNA_EN */
-	PINCONFIG(DT_INST_0_SWI_HL7800_MDM_GPS_EXT_LNA_EN_GPIOS_CONTROLLER,
-		  DT_INST_0_SWI_HL7800_MDM_GPS_EXT_LNA_EN_GPIOS_PIN,
-		  GPIO_DIR_IN),
 
 	/* MDM_VGPIO */
 	PINCONFIG(DT_INST_0_SWI_HL7800_MDM_VGPIO_GPIOS_CONTROLLER,
 		  DT_INST_0_SWI_HL7800_MDM_VGPIO_GPIOS_PIN,
+		  (GPIO_DIR_IN | GPIO_INT | GPIO_INT_EDGE |
+		   GPIO_INT_DOUBLE_EDGE),
 		  (GPIO_DIR_IN | GPIO_INT | GPIO_INT_EDGE |
 		   GPIO_INT_DOUBLE_EDGE)),
 
@@ -174,7 +175,29 @@ static const struct mdm_control_pinconfig pinconfig[] = {
 	PINCONFIG(DT_INST_0_SWI_HL7800_MDM_UART_DSR_GPIOS_CONTROLLER,
 		  DT_INST_0_SWI_HL7800_MDM_UART_DSR_GPIOS_PIN,
 		  (GPIO_DIR_IN | GPIO_INT | GPIO_INT_EDGE |
+		   GPIO_INT_DOUBLE_EDGE),
+		  (GPIO_DIR_IN | GPIO_INT | GPIO_INT_EDGE |
 		   GPIO_INT_DOUBLE_EDGE)),
+
+	/* MDM_UART_TX */
+	PINCONFIG(DT_INST_0_SWI_HL7800_MDM_UART_TX_GPIOS_CONTROLLER,
+		  DT_INST_0_SWI_HL7800_MDM_UART_TX_GPIOS_PIN, GPIO_DIR_OUT,
+		  (GPIO_DIR_IN | GPIO_PUD_PULL_DOWN)),
+
+	/* MDM_UART_RTS */
+	PINCONFIG(DT_INST_0_SWI_HL7800_MDM_UART_RTS_GPIOS_CONTROLLER,
+		  DT_INST_0_SWI_HL7800_MDM_UART_RTS_GPIOS_PIN, GPIO_DIR_OUT,
+		  (GPIO_DIR_IN | GPIO_PUD_PULL_DOWN)),
+
+	/* MDM_UART_RX */
+	PINCONFIG(DT_INST_0_SWI_HL7800_MDM_UART_RX_GPIOS_CONTROLLER,
+		  DT_INST_0_SWI_HL7800_MDM_UART_RX_GPIOS_PIN, GPIO_DIR_IN,
+		  (GPIO_DIR_IN | GPIO_PUD_PULL_DOWN)),
+
+	/* MDM_UART_CTS */
+	PINCONFIG(DT_INST_0_SWI_HL7800_MDM_UART_CTS_GPIOS_CONTROLLER,
+		  DT_INST_0_SWI_HL7800_MDM_UART_CTS_GPIOS_PIN, GPIO_DIR_IN,
+		  (GPIO_DIR_IN | GPIO_PUD_PULL_DOWN)),
 };
 
 #define MDM_UART_DEV_NAME DT_INST_0_SWI_HL7800_BUS_NAME
@@ -310,7 +333,6 @@ struct hl7800_iface_ctx {
 
 	/* GPIO PORT devices */
 	struct device *gpio_port_dev[MAX_MDM_CONTROL_PINS];
-	struct gpio_callback mdm_tx_on_cb;
 	struct gpio_callback mdm_vgpio_cb;
 	struct gpio_callback mdm_uart_dsr_cb;
 	u8_t vgpio_state;
@@ -2467,13 +2489,132 @@ static void hl7800_rx(void)
 	}
 }
 
-void mdm_tx_on_callback(struct device *port, struct gpio_callback *cb,
-			u32_t pins)
+static void modem_disconnect_uart_tx(void)
 {
-	u32_t val;
-	gpio_pin_read(ictx.gpio_port_dev[MDM_LTE_TX_ON],
-		      pinconfig[MDM_LTE_TX_ON].pin, &val);
-	LOG_DBG("MDM_TX_ON:%d", val);
+	int ret;
+
+	ret = gpio_pin_configure(ictx.gpio_port_dev[MDM_UART_TX],
+				 pinconfig[MDM_UART_TX].pin,
+				 pinconfig[MDM_UART_TX].sleep_config);
+	if (ret) {
+		LOG_ERR("Error disconnecting UART TX (%d)", ret);
+	}
+}
+
+static void modem_connect_uart_tx(void)
+{
+	int ret;
+	ret = gpio_pin_configure(ictx.gpio_port_dev[MDM_UART_TX],
+				 pinconfig[MDM_UART_TX].pin,
+				 pinconfig[MDM_UART_TX].config);
+	if (ret) {
+		LOG_ERR("Error connecting UART TX (%d)", ret);
+	}
+}
+
+static void modem_disconnect_uart_rts(void)
+{
+	int ret;
+
+	ret = gpio_pin_configure(ictx.gpio_port_dev[MDM_UART_RTS],
+				 pinconfig[MDM_UART_RTS].pin,
+				 pinconfig[MDM_UART_RTS].sleep_config);
+	if (ret) {
+		LOG_ERR("Error disconnecting UART RTS (%d)", ret);
+	}
+}
+
+static void modem_connect_uart_rts(void)
+{
+	int ret;
+	ret = gpio_pin_configure(ictx.gpio_port_dev[MDM_UART_RTS],
+				 pinconfig[MDM_UART_RTS].pin,
+				 pinconfig[MDM_UART_RTS].config);
+	if (ret) {
+		LOG_ERR("Error connecting UART RTS (%d)", ret);
+	}
+}
+
+static void modem_disconnect_uart_rx(void)
+{
+	int rc = gpio_pin_configure(ictx.gpio_port_dev[MDM_UART_RX],
+				    pinconfig[MDM_UART_RX].pin,
+				    pinconfig[MDM_UART_RX].sleep_config);
+	if (rc) {
+		LOG_ERR("Error disconnecting UART RX (%d)", rc);
+	}
+}
+
+static void modem_connect_uart_rx(void)
+{
+	int rc = gpio_pin_configure(ictx.gpio_port_dev[MDM_UART_RX],
+				    pinconfig[MDM_UART_RX].pin,
+				    pinconfig[MDM_UART_RX].config);
+	if (rc) {
+		LOG_ERR("Error connecting UART RX (%d)", rc);
+	}
+}
+
+static void modem_disconnect_uart_cts(void)
+{
+	int rc = gpio_pin_configure(ictx.gpio_port_dev[MDM_UART_CTS],
+				    pinconfig[MDM_UART_CTS].pin,
+				    pinconfig[MDM_UART_CTS].sleep_config);
+	if (rc) {
+		LOG_ERR("Error disconnecting UART CTS (%d)", rc);
+	}
+}
+
+static void modem_connect_uart_cts(void)
+{
+	int rc = gpio_pin_configure(ictx.gpio_port_dev[MDM_UART_CTS],
+				    pinconfig[MDM_UART_CTS].pin,
+				    pinconfig[MDM_UART_CTS].config);
+	if (rc) {
+		LOG_ERR("Error connecting UART CTS (%d)", rc);
+	}
+}
+
+static void shutdown_uart(void)
+{
+	int rc;
+	LOG_DBG("Power OFF the UART");
+	rc = device_set_power_state(ictx.mdm_ctx.uart_dev, DEVICE_PM_OFF_STATE,
+				    NULL, NULL);
+	if (rc) {
+		LOG_ERR("Error turning UART OFF (%d)", rc);
+	}
+
+	modem_disconnect_uart_tx();
+	modem_disconnect_uart_rts();
+	modem_disconnect_uart_rx();
+	modem_disconnect_uart_cts();
+}
+
+static void power_on_uart(void)
+{
+	int rc;
+	LOG_DBG("Power ON the UART");
+	modem_connect_uart_tx();
+	modem_connect_uart_rts();
+	modem_connect_uart_rx();
+	modem_connect_uart_cts();
+
+	rc = device_set_power_state(ictx.mdm_ctx.uart_dev,
+				    DEVICE_PM_ACTIVE_STATE, NULL, NULL);
+	if (rc) {
+		LOG_ERR("Error turning UART OFF (%d)", rc);
+	}
+}
+
+static void prepare_io_for_reset(void)
+{
+	LOG_DBG("Preparing IO for reset/sleep");
+	shutdown_uart();
+	modem_assert_wake(false);
+	modem_assert_pwr_on(false);
+	modem_assert_fast_shutd(false);
+	modem_assert_uart_dtr(false);
 }
 
 void mdm_vgpio_callback(struct device *port, struct gpio_callback *cb,
@@ -2484,6 +2625,7 @@ void mdm_vgpio_callback(struct device *port, struct gpio_callback *cb,
 		      &val);
 	ictx.vgpio_state = val;
 	if (!val) {
+		prepare_io_for_reset();
 		ictx.sleepState = HL7800_STATE_ASLEEP;
 		if (ictx.iface && ictx.initialized) {
 			/* bring the iface down */
@@ -2491,6 +2633,7 @@ void mdm_vgpio_callback(struct device *port, struct gpio_callback *cb,
 		}
 	} else {
 		ictx.sleepState = HL7800_STATE_WAKING;
+		power_on_uart();
 	}
 
 	LOG_DBG("VGPIO:%d", val);
@@ -2507,15 +2650,7 @@ void mdm_uart_dsr_callback(struct device *port, struct gpio_callback *cb,
 	LOG_DBG("MDM_UART_DSR:%d", val);
 }
 
-static void prepare_io_for_reset(void)
-{
-	modem_assert_wake(false);
-	modem_assert_pwr_on(false);
-	modem_assert_fast_shutd(false);
-	modem_assert_uart_dtr(false);
-}
-
-static int modem_reset(bool keepAwake)
+static int modem_reset()
 {
 	LOG_INF("Resetting Modem");
 
@@ -2533,9 +2668,6 @@ static int modem_reset(bool keepAwake)
 
 	/* Flag the modem as asleep until it is fully booted */
 	ictx.sleepState = HL7800_STATE_ASLEEP;
-	if (keepAwake) {
-		allow_sleep(false);
-	}
 
 	return 0;
 }
@@ -2581,9 +2713,11 @@ static int hl7800_modem_reset(void)
 	/* stop RSSI delay work */
 	hl7800_stop_rssi_work();
 
-	modem_reset(true);
+	modem_reset();
 
 	waitForBoot();
+
+	allow_sleep(false);
 
 	/* turn OFF echo */
 	ret = echoOff();
@@ -3367,7 +3501,6 @@ static int offload_put(struct net_context *context)
 	} else {
 		snprintk(cmd1, sizeof(cmd1), "AT+KUDPCLOSE=%d",
 			 sock->socket_id);
-		snprintk(cmd2, sizeof(cmd2), "AT+KUDPDEL=%d", sock->socket_id);
 	}
 
 	ret = send_at_cmd(sock, cmd1, MDM_CMD_SEND_TIMEOUT, 0, false);
@@ -3375,10 +3508,12 @@ static int offload_put(struct net_context *context)
 		LOG_ERR("AT+K**PCLOSE ret:%d", ret);
 	}
 
-	/* delete session */
-	ret = send_at_cmd(sock, cmd2, MDM_CMD_SEND_TIMEOUT, 0, false);
-	if (ret < 0) {
-		LOG_ERR("AT+K**PDEL ret:%d", ret);
+	if (sock->type == SOCK_STREAM) {
+		/* delete session */
+		ret = send_at_cmd(sock, cmd2, MDM_CMD_SEND_TIMEOUT, 0, false);
+		if (ret < 0) {
+			LOG_ERR("AT+K**PDEL ret:%d", ret);
+		}
 	}
 #ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
 	allow_sleep(true);
@@ -3397,9 +3532,9 @@ static int offload_put(struct net_context *context)
 static struct net_offload offload_funcs = {
 	.get = offload_get,
 	.bind = offload_bind,
-	.listen = offload_listen, /* TODO */
+	.listen = offload_listen,
 	.connect = offload_connect,
-	.accept = offload_accept, /* TODO */
+	.accept = offload_accept,
 	.send = offload_send,
 	.sendto = offload_sendto,
 	.recv = offload_recv,
@@ -3475,22 +3610,6 @@ static int hl7800_init(struct device *dev)
 	}
 
 	/* setup input pin callbacks */
-	/* LTE TX ON callback */
-	gpio_init_callback(&ictx.mdm_tx_on_cb, mdm_tx_on_callback,
-			   BIT(pinconfig[MDM_LTE_TX_ON].pin));
-	ret = gpio_add_callback(ictx.gpio_port_dev[MDM_LTE_TX_ON],
-				&ictx.mdm_tx_on_cb);
-	if (ret) {
-		LOG_ERR("Cannot setup tx_on callback! (%d)", ret);
-		return ret;
-	}
-	ret = gpio_pin_enable_callback(ictx.gpio_port_dev[MDM_LTE_TX_ON],
-				       pinconfig[MDM_LTE_TX_ON].pin);
-	if (ret) {
-		LOG_ERR("Error enabling tx_on callback! (%d)", ret);
-		return ret;
-	}
-
 	/* VGPIO */
 	gpio_init_callback(&ictx.mdm_vgpio_cb, mdm_vgpio_callback,
 			   BIT(pinconfig[MDM_VGPIO].pin));
