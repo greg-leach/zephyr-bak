@@ -2579,6 +2579,7 @@ static void shutdown_uart(void)
 {
 	int rc;
 	LOG_DBG("Power OFF the UART");
+	/* Disable the UART peripheral */
 	rc = device_set_power_state(ictx.mdm_ctx.uart_dev, DEVICE_PM_OFF_STATE,
 				    NULL, NULL);
 	if (rc) {
@@ -2599,7 +2600,7 @@ static void power_on_uart(void)
 	modem_connect_uart_rts();
 	modem_connect_uart_rx();
 	modem_connect_uart_cts();
-
+	/* Enable the UART peripheral */
 	rc = device_set_power_state(ictx.mdm_ctx.uart_dev,
 				    DEVICE_PM_ACTIVE_STATE, NULL, NULL);
 	if (rc) {
@@ -2683,7 +2684,7 @@ static void waitForBoot(void)
 		LOG_ERR("Err waiting for boot: %d, DSR: %u", ret,
 			ictx.dsr_state);
 	}
-	LOG_DBG("Modem booted!");
+	LOG_INF("Modem booted!");
 }
 
 static int echoOff(void)
@@ -2745,6 +2746,7 @@ static int hl7800_modem_reset(void)
 	/* setup RAT */
 #if CONFIG_MODEM_HL7800_CAT_M1
 	if (ictx.mdm_rat != MDM_RAT_CAT_M1) {
+		LOG_INF("Setting Cat-M1 mode");
 		ret = send_at_cmd(NULL, "AT+KSRAT=0", MDM_CMD_SEND_TIMEOUT,
 				  MDM_DEFAULT_AT_CMD_RETRIES, false);
 		if (ret < 0) {
@@ -2752,9 +2754,11 @@ static int hl7800_modem_reset(void)
 			goto error;
 		}
 		rat_set = true;
+		ictx.mdm_rat = MDM_RAT_CAT_M1;
 	}
 #elif CONFIG_MODEM_HL7800_CAT_NB1
 	if (ictx.mdm_rat != MDM_RAT_CAT_NB1) {
+		LOG_INF("Setting Cat-NB1 mode");
 		ret = send_at_cmd(NULL, "AT+KSRAT=1", MDM_CMD_SEND_TIMEOUT,
 				  MDM_DEFAULT_AT_CMD_RETRIES, false);
 		if (ret < 0) {
@@ -2762,10 +2766,12 @@ static int hl7800_modem_reset(void)
 			goto error;
 		}
 		rat_set = true;
+		ictx.mdm_rat = MDM_RAT_CAT_NB1;
 	}
 #endif
 	if (rat_set) {
 		/* RAT was just set, wait for reboot */
+		LOG_INF("Radio mode was changed, rebooting...");
 		waitForBoot();
 
 		/* turn OFF echo after reboot because it is volatile */
