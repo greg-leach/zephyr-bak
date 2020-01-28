@@ -40,9 +40,10 @@ LOG_MODULE_REGISTER(LOG_DOMAIN);
 #include "modem_receiver.h"
 #include <drivers/modem/hl7800.h>
 
-// clang-format off
-#define SWITCH_CASE_RETURN_STRING(val) case val: { return #val;	}
-// clang-format on
+#define PREFIXED_SWITCH_CASE_RETURN_STRING(prefix, val)                        \
+	case prefix##_##val: {                                                 \
+		return #val;                                                   \
+	}
 
 /* Uncomment the #define below to enable a hexdump of all incoming
  * data from the modem receiver
@@ -64,27 +65,6 @@ enum sleep_state {
 	HL7800_STATE_ASLEEP,
 	HL7800_STATE_WAKING,
 	HL7800_STATE_AWAKE,
-};
-
-enum hl7800_startup_state {
-	HL7800_STARTUP_STATE_READY = 0,
-	HL7800_STARTUP_STATE_WAITING_FOR_ACCESS_CODE = 1,
-	HL7800_STARTUP_STATE_SIM_NOT_PRESENT = 2,
-	HL7800_STARTUP_STATE_SIMLOCK = 3,
-	HL7800_STARTUP_STATE_UNRECOVERABLE_ERROR = 4,
-	HL7800_STARTUP_STATE_UNKNOWN = 5,
-	HL7800_STARTUP_STATE_INACTIVE_SIM = 6,
-	HL7800_STARTUP_STATE_KSUP_NEVER_RECIEVED = 7,
-};
-
-enum hl7800_network_state {
-	HL7800_NOT_REGISTERED = 0,
-	HL7800_HOME_NETWORK,
-	HL7800_SEARCHING,
-	HL7800_REG_DENIED,
-	HL7800_OUT_OF_COVERAGE,
-	HL7800_ROAMING,
-	HL7800_EMERGENCY = 8,
 };
 
 enum tcp_notif {
@@ -267,7 +247,6 @@ static const struct mdm_control_pinconfig pinconfig[] = {
 #define MDM_MODEL_LENGTH 7
 #define MDM_REVISION_LENGTH_MIN 15
 #define MDM_REVISION_LENGTH_MAX 29
-#define MDM_IMEI_LENGTH 16
 #define MDM_SN_LENGTH 15
 #define MDM_SN_RESPONSE_LENGTH MDM_SN_LENGTH + 7
 #define MDM_NETWORK_STATUS_LENGTH 45
@@ -302,6 +281,15 @@ static const struct mdm_control_pinconfig pinconfig[] = {
 
 #define MAX_PROFILE_LINE_LENGTH                                                \
 	MAX(sizeof(PROFILE_LINE_1), sizeof(PROFILE_LINE_2))
+
+#define SEND_AT_CMD_ONCE_EXPECT_OK(c)                                          \
+	do {                                                                   \
+		ret = send_at_cmd(NULL, (c), MDM_CMD_SEND_TIMEOUT, 0, false);  \
+		if (ret < 0) {                                                 \
+			LOG_ERR("%s result:%d", (c), ret);                     \
+			goto error;                                            \
+		}                                                              \
+	} while (0)
 
 #define SEND_AT_CMD_EXPECT_OK(c)                                               \
 	do {                                                                   \
@@ -417,7 +405,7 @@ struct hl7800_iface_ctx {
 	char mdm_manufacturer[MDM_MANUFACTURER_LENGTH];
 	char mdm_model[MDM_MODEL_LENGTH];
 	char mdm_revision[MDM_REVISION_LENGTH_MAX];
-	char mdm_imei[MDM_IMEI_LENGTH];
+	char mdm_imei[MDM_HL7800_IMEI_SIZE];
 	char mdm_sn[MDM_SN_LENGTH];
 	char mdm_network_status[MDM_NETWORK_STATUS_LENGTH];
 	char mdm_iccid[MDM_ICCID_LENGTH + 1];
@@ -428,12 +416,14 @@ struct hl7800_iface_ctx {
 	u32_t mdm_bands_bottom;
 	s32_t mdm_sinr;
 	bool mdm_echo_is_on;
+	struct mdm_hl7800_apn mdm_apn;
 
 	/* modem state */
 	bool allowSleep;
 	enum sleep_state sleepState;
-	enum hl7800_network_state networkState;
+	enum mdm_hl7800_network_state networkState;
 	enum net_operator_status operatorStatus;
+	void (*event_callback)(enum mdm_hl7800_event event, void *event_data);
 };
 
 struct cmd_handler {
@@ -445,6 +435,8 @@ struct cmd_handler {
 static struct hl7800_iface_ctx ictx;
 
 static size_t hl7800_read_rx(struct net_buf **buf);
+static char *get_network_state_string(u32_t State);
+static char *get_startup_state_string(u8_t State);
 
 /*** Verbose Debugging Functions ***/
 #if defined(HL7800_ENABLE_VERBOSE_MODEM_RECV_HEXDUMP)
@@ -707,6 +699,7 @@ static void modem_assert_uart_dtr(bool assert)
 
 static void allow_sleep(bool allow)
 {
+#ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
 	if (allow) {
 		LOG_INF("Allow sleep");
 		ictx.allowSleep = true;
@@ -719,6 +712,14 @@ static void allow_sleep(bool allow)
 		ictx.allowSleep = false;
 		modem_assert_wake(true);
 		modem_assert_uart_dtr(true);
+	}
+#endif
+}
+
+static void event_handler(enum mdm_hl7800_event event, void *event_data)
+{
+	if (ictx.event_callback != NULL) {
+		ictx.event_callback(event, event_data);
 	}
 }
 
@@ -785,9 +786,9 @@ done:
 	return ret;
 }
 
-#ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
 static int wakeup_hl7800(void)
 {
+#ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
 	int ret;
 	allow_sleep(false);
 	if (ictx.sleepState != HL7800_STATE_AWAKE) {
@@ -798,10 +799,10 @@ static int wakeup_hl7800(void)
 			LOG_ERR("Err waiting for wakeup: %d", ret);
 		}
 	}
+#endif
 
 	return 0;
 }
-#endif
 
 s32_t mdm_hl7800_send_at_cmd(const u8_t *data)
 {
@@ -813,19 +814,74 @@ s32_t mdm_hl7800_send_at_cmd(const u8_t *data)
 
 	hl7800_lock();
 
-#ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
 	bool goBackToSleep = ictx.allowSleep;
 	wakeup_hl7800();
-#endif
 	ictx.last_socket_id = 0;
 	ret = send_at_cmd(NULL, data, MDM_CMD_SEND_TIMEOUT, 0, false);
-#ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
-	if (goBackToSleep) {
-		allow_sleep(true);
-	}
-#endif
+	allow_sleep(goBackToSleep);
 	hl7800_unlock();
 	return ret;
+}
+
+/* The access point name, username, and password are stored in the modem's 
+ * non-volatile memory.
+ */
+s32_t mdm_hl7800_update_apn(struct mdm_hl7800_apn *access_point)
+{
+	int ret = -EINVAL;
+	char cmd_string[MDM_HL7800_APN_CMD_MAX_SIZE];
+
+	hl7800_lock();
+	wakeup_hl7800();
+	bool goBackToSleep = ictx.allowSleep;
+	ictx.last_socket_id = 0;
+
+	/* Disable context so APN can be changed */
+	SEND_AT_CMD_ONCE_EXPECT_OK("AT+CGACT=0");
+
+	/* PDP Context */
+	memset(cmd_string, 0, MDM_HL7800_APN_CMD_MAX_SIZE);
+	strncat(cmd_string, "AT+CGDCONT=1,\"IP\",\"", MDM_HL7800_APN_CMD_MAX_STRLEN);
+	strncat(cmd_string, access_point->value, MDM_HL7800_APN_CMD_MAX_STRLEN);
+	strncat(cmd_string, "\"", MDM_HL7800_APN_CMD_MAX_STRLEN);
+	SEND_AT_CMD_ONCE_EXPECT_OK(cmd_string);
+
+	/* PDP context Authentication configuration */
+	memset(cmd_string, 0, MDM_HL7800_APN_CMD_MAX_SIZE);
+	strncat(cmd_string, "AT+WPPP=1,,\"", MDM_HL7800_APN_CMD_MAX_STRLEN);
+	strncat(cmd_string, access_point->username, MDM_HL7800_APN_CMD_MAX_STRLEN);
+	strncat(cmd_string, "\",\"", MDM_HL7800_APN_CMD_MAX_STRLEN);
+	strncat(cmd_string, access_point->password, MDM_HL7800_APN_CMD_MAX_STRLEN);
+	strncat(cmd_string, "\"", MDM_HL7800_APN_CMD_MAX_STRLEN);
+	SEND_AT_CMD_ONCE_EXPECT_OK(cmd_string);
+
+error:
+	allow_sleep(goBackToSleep);
+	hl7800_unlock();
+	if (ret >= 0) {
+		/* The context enable command won't work now, so reset the modem. 
+		 * This will cause the apn values to be re-read and an APN event will be 
+		 * generated.
+		 */
+		return mdm_hl7800_reset();
+	}
+	return ret;
+}
+
+void mdm_hl7800_generate_status_events(void)
+{
+	hl7800_lock();
+	struct mdm_hl7800_compound_event event;
+	event.code = ictx.networkState;
+	event.string = get_network_state_string(ictx.networkState);
+	event_handler(HL7800_EVENT_NETWORK_STATE_CHANGE, &event);
+	event.code = ictx.mdm_startup_state;
+	event.string = get_startup_state_string(ictx.mdm_startup_state);
+	event_handler(HL7800_EVENT_STARTUP_STATE_CHANGE, &event);
+	event_handler(HL7800_EVENT_RSSI, &ictx.mdm_ctx.data_rssi);
+	event_handler(HL7800_EVENT_SINR, &ictx.mdm_sinr);
+	event_handler(HL7800_EVENT_APN_UPDATE, &ictx.mdm_apn);
+	hl7800_unlock();
 }
 
 static int send_data(struct hl7800_socket *sock, struct net_pkt *pkt)
@@ -1178,12 +1234,11 @@ static bool on_cmd_atcmdinfo_imei(struct net_buf **buf, u16_t len)
 {
 	struct net_buf *frag = NULL;
 	size_t out_len;
-	int len_no_null = MDM_IMEI_LENGTH - 1;
 
 	/* make sure IMEI data is received
 	*  waiting for: ###############\r\n
 	*/
-	wait_for_modem_data(buf, net_buf_frags_len(*buf), MDM_IMEI_LENGTH);
+	wait_for_modem_data(buf, net_buf_frags_len(*buf), MDM_HL7800_IMEI_STRLEN);
 
 	frag = NULL;
 	len = net_buf_findcrlf(*buf, &frag);
@@ -1191,11 +1246,11 @@ static bool on_cmd_atcmdinfo_imei(struct net_buf **buf, u16_t len)
 		LOG_ERR("Unable to find IMEI end");
 		goto done;
 	}
-	if (len < len_no_null) {
+	if (len < MDM_HL7800_IMEI_STRLEN) {
 		LOG_WRN("IMEI too short (len:%d)", len);
-	} else if (len > len_no_null) {
+	} else if (len > MDM_HL7800_IMEI_STRLEN) {
 		LOG_WRN("IMEI too long (len:%d)", len);
-		len = MDM_IMEI_LENGTH;
+		len = MDM_HL7800_IMEI_STRLEN;
 	}
 
 	out_len = net_buf_linearize(ictx.mdm_imei, sizeof(ictx.mdm_imei) - 1,
@@ -1533,19 +1588,19 @@ static bool on_cmd_radio_band_configuration(struct net_buf **buf, u16_t len)
 	return true;
 }
 
-static char const *get_startup_state_string(u8_t State)
+static char *get_startup_state_string(u8_t state)
 {
 	// clang-format off
-	switch (State) {
-		SWITCH_CASE_RETURN_STRING(HL7800_STARTUP_STATE_READY);
-		SWITCH_CASE_RETURN_STRING(HL7800_STARTUP_STATE_WAITING_FOR_ACCESS_CODE);
-		SWITCH_CASE_RETURN_STRING(HL7800_STARTUP_STATE_SIM_NOT_PRESENT);
-		SWITCH_CASE_RETURN_STRING(HL7800_STARTUP_STATE_SIMLOCK);
-		SWITCH_CASE_RETURN_STRING(HL7800_STARTUP_STATE_UNRECOVERABLE_ERROR);
-		SWITCH_CASE_RETURN_STRING(HL7800_STARTUP_STATE_UNKNOWN);
-		SWITCH_CASE_RETURN_STRING(HL7800_STARTUP_STATE_INACTIVE_SIM);
+	switch (state) {
+		PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800_STARTUP_STATE, READY);
+		PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800_STARTUP_STATE, WAITING_FOR_ACCESS_CODE);
+		PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800_STARTUP_STATE, SIM_NOT_PRESENT);
+		PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800_STARTUP_STATE, SIMLOCK);
+		PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800_STARTUP_STATE, UNRECOVERABLE_ERROR);
+		PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800_STARTUP_STATE, UNKNOWN);
+		PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800_STARTUP_STATE, INACTIVE_SIM);
 	default:
-		return "HL7800_STARTUP_STATE_UNKNOWN";
+		return "UNKNOWN";
 	}
 	// clang-format on
 }
@@ -1562,7 +1617,11 @@ static bool on_cmd_startup_report(struct net_buf **buf, u16_t len)
 	} else {
 		ictx.mdm_startup_state = HL7800_STARTUP_STATE_UNKNOWN;
 	}
-	LOG_INF("%s", get_startup_state_string(ictx.mdm_startup_state));
+	struct mdm_hl7800_compound_event event;
+	event.code = ictx.mdm_startup_state;
+	event.string = get_startup_state_string(ictx.mdm_startup_state);
+	LOG_INF("%s", event.string);
+	event_handler(HL7800_EVENT_STARTUP_STATE_CHANGE, &event);
 	ictx.sleepState = HL7800_STATE_AWAKE;
 	k_sem_give(&ictx.mdm_awake);
 	return true;
@@ -1631,6 +1690,116 @@ static bool on_cmd_atcmdinfo_stored_profile1(struct net_buf **buf, u16_t len)
 	return profile_handler(buf, len, false);
 }
 
+/* +WPPP: 1,1,"username","password" */
+static bool on_cmd_atcmdinfo_pdp_authentication_cfg(struct net_buf **buf,
+						    u16_t len)
+{
+	u32_t size = wait_for_modem_data(buf, net_buf_frags_len(*buf),
+					 MDM_HL7800_APN_CMD_MAX_SIZE);
+
+	struct net_buf *frag = NULL;
+	u16_t line_length = net_buf_findcrlf(*buf, &frag);
+	if (line_length) {
+		char line[MDM_HL7800_APN_CMD_MAX_SIZE];
+		memset(line, 0, sizeof(line));
+		size_t output_length = net_buf_linearize(
+			line, SIZE_WITHOUT_NUL(line), *buf, 0, line_length);
+		Z_LOG(LOG_LEVEL_OFF, "length: %u: %s", line_length,
+		      log_strdup(line));
+		if (output_length > 0) {
+			memset(ictx.mdm_apn.username, 0,
+			       sizeof(ictx.mdm_apn.username));
+			memset(ictx.mdm_apn.password, 0,
+			       sizeof(ictx.mdm_apn.password));
+
+			size_t i = 0;
+			char *p = strchr(line, '"');
+			if (p != NULL) {
+				p += 1;
+				i = 0;
+				while ((p != NULL) && (*p != '"') &&
+				       (i < MDM_HL7800_APN_USERNAME_MAX_STRLEN)) {
+					ictx.mdm_apn.username[i++] = *p++;
+				}
+			}
+			LOG_INF("APN Username: %s", ictx.mdm_apn.username);
+
+			p = strchr(p + 1, '"');
+			if (p != NULL) {
+				p += 1;
+				i = 0;
+				while ((p != NULL) && (*p != '"') &&
+				       (i < MDM_HL7800_APN_PASSWORD_MAX_STRLEN)) {
+					ictx.mdm_apn.password[i++] = *p++;
+				}
+			}
+			LOG_INF("APN Password: %s", ictx.mdm_apn.password);
+		}
+	}
+	net_buf_remove(buf, line_length);
+	net_buf_skipcrlf(buf);
+
+	// Discard next line.
+	size = wait_for_modem_data(buf, net_buf_frags_len(*buf),
+				   MDM_HL7800_APN_CMD_MAX_SIZE);
+	net_buf_skipcrlf(buf);
+	len = net_buf_findcrlf(*buf, &frag);
+	net_buf_remove(buf, len);
+	net_buf_skipcrlf(buf);
+
+	return false;
+}
+
+/* +CGDCONT: 1,"IP","access point name",,0,0,0,0,0,,0,,,,,
+ * +CGDCONT: 2,"IPV4V6","access point name",,0,0,0,0,0,,0,,,,,
+ */
+static bool on_cmd_atcmdinfo_pdp_context(struct net_buf **buf, u16_t len)
+{
+	u32_t size = wait_for_modem_data(buf, net_buf_frags_len(*buf),
+					 MDM_HL7800_APN_CMD_MAX_SIZE);
+
+	struct net_buf *frag = NULL;
+	u16_t line_length = net_buf_findcrlf(*buf, &frag);
+	if (line_length) {
+		char line[MDM_HL7800_APN_CMD_MAX_SIZE];
+		memset(line, 0, sizeof(line));
+		size_t output_length = net_buf_linearize(
+			line, SIZE_WITHOUT_NUL(line), *buf, 0, line_length);
+		Z_LOG(LOG_LEVEL_OFF, "length: %u: %s", line_length,
+		      log_strdup(line));
+		if (output_length > 0) {
+			memset(ictx.mdm_apn.value, 0,
+			       sizeof(ictx.mdm_apn.value));
+
+			/* The name is after the 3rd " */
+			char *p = strchr(line, '"');
+			p = strchr(p + 1, '"');
+			p = strchr(p + 1, '"');
+			if (p != NULL) {
+				p += 1;
+				size_t i = 0;
+				while ((p != NULL) && (*p != '"') &&
+				       (i < MDM_HL7800_APN_MAX_STRLEN)) {
+					ictx.mdm_apn.value[i++] = *p++;
+				}
+			}
+			LOG_INF("APN: %s", ictx.mdm_apn.value);
+		}
+	}
+	net_buf_remove(buf, line_length);
+	net_buf_skipcrlf(buf);
+
+	// Discard next line.
+	size = wait_for_modem_data(buf, net_buf_frags_len(*buf),
+				   MDM_HL7800_APN_CMD_MAX_SIZE);
+	net_buf_skipcrlf(buf);
+	len = net_buf_findcrlf(*buf, &frag);
+	net_buf_remove(buf, len);
+	net_buf_skipcrlf(buf);
+
+	return false;
+}
+
 static int hl7800_query_rssi(void)
 {
 	int ret;
@@ -1642,30 +1811,27 @@ static int hl7800_query_rssi(void)
 	return ret;
 }
 
-#ifndef CONFIG_MODEM_HL7800_LOW_POWER_MODE
 static void hl7800_start_rssi_work(void)
 {
+#ifndef CONFIG_MODEM_HL7800_LOW_POWER_MODE
 	k_delayed_work_submit_to_queue(&hl7800_workq, &ictx.rssi_query_work,
-				       K_SECONDS(RSSI_TIMEOUT_SECS));
-}
+				       K_NO_WAIT);
 #endif
+}
 
 static void hl7800_stop_rssi_work(void)
 {
+#ifndef CONFIG_MODEM_HL7800_LOW_POWER_MODE
 	k_delayed_work_cancel(&ictx.rssi_query_work);
+#endif
 }
 
 static void hl7800_rssi_query_work(struct k_work *work)
 {
 	hl7800_lock();
-#ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
 	wakeup_hl7800();
-#endif
 	hl7800_query_rssi();
-#ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
 	allow_sleep(true);
-#endif
-
 	hl7800_unlock();
 
 	/* re-start RSSI query work */
@@ -1679,9 +1845,8 @@ static void iface_status_work_cb(struct k_work *work)
 
 	hl7800_lock();
 	LOG_DBG("Updating network state...");
-#ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
 	wakeup_hl7800();
-#endif
+
 	/* bring iface up/down */
 	switch (ictx.networkState) {
 	case HL7800_HOME_NETWORK:
@@ -1720,14 +1885,10 @@ static void iface_status_work_cb(struct k_work *work)
 	}
 
 	if (ictx.iface && !net_if_is_up(ictx.iface)) {
-#ifndef CONFIG_MODEM_HL7800_LOW_POWER_MODE
 		hl7800_stop_rssi_work();
-#endif
 	} else if (ictx.iface && net_if_is_up(ictx.iface)) {
-#ifndef CONFIG_MODEM_HL7800_LOW_POWER_MODE
-		hl7800_query_rssi();
 		hl7800_start_rssi_work();
-#endif
+
 		/* get IP address info */
 		ret = send_at_cmd(NULL, "AT+CGCONTRDP=1", MDM_CMD_SEND_TIMEOUT,
 				  0, false);
@@ -1736,10 +1897,25 @@ static void iface_status_work_cb(struct k_work *work)
 		}
 	}
 	LOG_DBG("Network state updated");
-#ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
 	allow_sleep(true);
-#endif
 	hl7800_unlock();
+}
+
+static char *get_network_state_string(u32_t state)
+{
+	// clang-format off
+    switch (state) {
+        PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800, NOT_REGISTERED);
+        PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800, HOME_NETWORK);
+        PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800, SEARCHING);
+        PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800, REGISTRATION_DENIED);
+        PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800, OUT_OF_COVERAGE);
+        PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800, ROAMING);
+        PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800, EMERGENCY);
+    default:
+        return "UNKNOWN";
+    }
+	// clang-format on
 }
 
 /* Handler: +CEREG: <n>,<stat>[,[<lac>],[<ci>],[<AcT>]
@@ -1763,7 +1939,11 @@ static bool on_cmd_network_report(struct net_buf **buf, u16_t len)
 		ictx.networkState = strtol(ictx.mdm_network_status, NULL, 0);
 	}
 
-	LOG_INF("Network: %d", ictx.networkState);
+	struct mdm_hl7800_compound_event event;
+	event.code = ictx.networkState;
+	event.string = get_network_state_string(ictx.networkState);
+	LOG_INF("Network: %d %s", ictx.networkState, event.string);
+	event_handler(HL7800_EVENT_NETWORK_STATE_CHANGE, &event);
 
 	if (ictx.initialized && !ictx.restarting) {
 		/* start work to adjust iface */
@@ -1815,6 +1995,8 @@ static bool on_cmd_atcmdinfo_rssi(struct net_buf **buf, u16_t len)
 	} else {
 		LOG_INF("RSSI (RSRP): %d SINR: %d", ictx.mdm_ctx.data_rssi,
 			ictx.mdm_sinr);
+		event_handler(HL7800_EVENT_RSSI, &ictx.mdm_ctx.data_rssi);
+		event_handler(HL7800_EVENT_SINR, &ictx.mdm_sinr);
 	}
 done:
 	return true;
@@ -2199,9 +2381,7 @@ rx_err:
 	sock->recv_pkt = NULL;
 done:
 	sock->state = SOCK_IDLE;
-#ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
 	allow_sleep(true);
-#endif
 	hl7800_TX_unlock();
 }
 
@@ -2285,11 +2465,8 @@ static void sock_rx_data_cb_work(struct k_work *work)
 		return;
 	}
 
-	/* lock */
 	hl7800_lock();
-#ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
 	wakeup_hl7800();
-#endif
 
 	/* start RX */
 	rc = start_socket_rx(sock, sock->rx_size);
@@ -2444,6 +2621,8 @@ static void hl7800_rx(void)
 		CMD_HANDLER("ACTIVE PROFILE:", atcmdinfo_active_profile),
 		CMD_HANDLER("STORED PROFILE 0:", atcmdinfo_stored_profile0),
 		CMD_HANDLER("STORED PROFILE 1:", atcmdinfo_stored_profile1),
+		CMD_HANDLER("+WPPP:", atcmdinfo_pdp_authentication_cfg),
+		CMD_HANDLER("+CGDCONT:", atcmdinfo_pdp_context),
 
 		/* UNSOLICITED modem information */
 		/* mobile startup report */
@@ -3029,13 +3208,17 @@ static int modem_reset_and_configure(void)
 	/* query SIM ICCID */
 	SEND_AT_CMD_EXPECT_OK("AT+CCID?");
 
-	const char SETUP_APN_CMD[] =
-		"AT+CGDCONT=1,\"IP\",\"" CONFIG_MODEM_HL7800_APN_NAME "\"";
-	SEND_AT_CMD_EXPECT_OK(SETUP_APN_CMD);
-
-	const char SETUP_GPRS_CONNECTION_CMD[] =
-		"AT+KCNXCFG=1,\"GPRS\",\"" CONFIG_MODEM_HL7800_APN_NAME "\"";
+	/* An empty string is used here so that it doesn't conflict
+	 * with the APN used in the +CGDCONT command.
+	 */
+	const char SETUP_GPRS_CONNECTION_CMD[] = "AT+KCNXCFG=1,\"GPRS\",\"\"";
 	SEND_AT_CMD_EXPECT_OK(SETUP_GPRS_CONNECTION_CMD);
+
+	/* Query PDP context to get APN */
+	SEND_AT_CMD_EXPECT_OK("AT+CGDCONT?");
+
+	/* Query PDP authentication context to get APN username/password */
+	SEND_AT_CMD_EXPECT_OK("AT+WPPP?");
 
 	/* Turn on EPS network registration status reporting */
 	SEND_AT_CMD_EXPECT_OK("AT+CEREG=4");
@@ -3049,6 +3232,7 @@ static int modem_reset_and_configure(void)
 	allow_sleep(allowSleep);
 	ictx.restarting = false;
 	LOG_INF("Modem ready!");
+	event_handler(HL7800_EVENT_APN_UPDATE, &ictx.mdm_apn);
 	return 0;
 
 error:
@@ -3080,13 +3264,9 @@ static int hl7800_power_off(void)
 {
 	int ret = 0;
 	LOG_INF("Powering off modem");
-#ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
-	/* Wake up the module */
 	wakeup_hl7800();
-#else
-	/* stop RSSI delay work */
 	hl7800_stop_rssi_work();
-#endif
+
 	/* use the restarting flag to prevent +CEREG updates */
 	ictx.restarting = true;
 
@@ -3113,6 +3293,14 @@ s32_t mdm_hl7800_power_off(void)
 	hl7800_unlock();
 
 	return rc;
+}
+
+void mdm_hl7800_register_event_callback(
+	void (*callback)(enum mdm_hl7800_event event, void *event_data))
+{
+	int key = irq_lock();
+	ictx.event_callback = callback;
+	irq_unlock(key);
 }
 
 /*** OFFLOAD FUNCTIONS ***/
@@ -3145,9 +3333,8 @@ static int offload_get(sa_family_t family, enum net_sock_type type,
 	*  TCP socket needs to be created later once the connection IP address is known.
 	*/
 	if (type == SOCK_DGRAM) {
-#ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
 		wakeup_hl7800();
-#endif
+
 		ret = send_at_cmd(sock, "AT+KUDPCFG=1,0", MDM_CMD_SEND_TIMEOUT,
 				  0, false);
 		if (ret < 0) {
@@ -3170,9 +3357,7 @@ static int offload_get(sa_family_t family, enum net_sock_type type,
 		}
 	}
 done:
-#ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
 	allow_sleep(true);
-#endif
 	hl7800_unlock();
 	return ret;
 }
@@ -3278,9 +3463,8 @@ static int offload_connect(struct net_context *context,
 	hl7800_lock();
 
 	if (sock->type == SOCK_STREAM) {
-#ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
 		wakeup_hl7800();
-#endif
+
 		/* Configure/create TCP connection */
 		if (!sock->created) {
 			snprintk(cmd_cfg, sizeof(cmd_cfg),
@@ -3322,9 +3506,8 @@ static int offload_connect(struct net_context *context,
 	}
 
 done:
-#ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
+
 	allow_sleep(true);
-#endif
 	hl7800_unlock();
 
 	if (cb) {
@@ -3380,13 +3563,11 @@ static int offload_sendto(struct net_pkt *pkt, const struct sockaddr *dst_addr,
 	}
 
 	hl7800_lock();
-#ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
 	wakeup_hl7800();
-#endif
+
 	ret = send_data(sock, pkt);
-#ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
+
 	allow_sleep(true);
-#endif
 	hl7800_unlock();
 
 	if (ret < 0) {
@@ -3469,9 +3650,7 @@ static int offload_put(struct net_context *context)
 	k_delayed_work_cancel(&sock->notif_work);
 
 	hl7800_lock();
-#ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
 	wakeup_hl7800();
-#endif
 
 	/* close connection */
 	if (sock->type == SOCK_STREAM) {
@@ -3495,9 +3674,8 @@ static int offload_put(struct net_context *context)
 			LOG_ERR("AT+K**PDEL ret:%d", ret);
 		}
 	}
-#ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
+
 	allow_sleep(true);
-#endif
 
 	sock->context->connect_cb = NULL;
 	sock->context->recv_cb = NULL;
