@@ -24,11 +24,14 @@ extern "C" {
 #define MDM_HL7800_APN_PASSWORD_MAX_SIZE 65
 
 #define MDM_HL7800_APN_MAX_STRLEN (MDM_HL7800_APN_MAX_SIZE - 1)
-#define MDM_HL7800_APN_USERNAME_MAX_STRLEN (MDM_HL7800_APN_USERNAME_MAX_SIZE - 1)
-#define MDM_HL7800_APN_PASSWORD_MAX_STRLEN (MDM_HL7800_APN_PASSWORD_MAX_SIZE - 1)
+#define MDM_HL7800_APN_USERNAME_MAX_STRLEN                                     \
+	(MDM_HL7800_APN_USERNAME_MAX_SIZE - 1)
+#define MDM_HL7800_APN_PASSWORD_MAX_STRLEN                                     \
+	(MDM_HL7800_APN_PASSWORD_MAX_SIZE - 1)
 
-#define MDM_HL7800_APN_CMD_MAX_SIZE                                                   \
-	(32 + MDM_HL7800_APN_USERNAME_MAX_STRLEN + MDM_HL7800_APN_PASSWORD_MAX_STRLEN)
+#define MDM_HL7800_APN_CMD_MAX_SIZE                                            \
+	(32 + MDM_HL7800_APN_USERNAME_MAX_STRLEN +                             \
+	 MDM_HL7800_APN_PASSWORD_MAX_STRLEN)
 
 #define MDM_HL7800_APN_CMD_MAX_STRLEN (MDM_HL7800_APN_CMD_MAX_SIZE - 1)
 
@@ -58,7 +61,8 @@ enum mdm_hl7800_startup_state {
 };
 /* The prefix isn't part of the state string */
 #define MDM_HL7800_MAX_STARTUP_STATE_SIZE (sizeof("WAITING_FOR_ACCESS_CODE"))
-#define MDM_HL7800_MAX_STARTUP_STATE_STRLEN (MDM_HL7800_MAX_STARTUP_STATE_SIZE - 1)
+#define MDM_HL7800_MAX_STARTUP_STATE_STRLEN                                    \
+	(MDM_HL7800_MAX_STARTUP_STATE_SIZE - 1)
 
 enum mdm_hl7800_network_state {
 	HL7800_NOT_REGISTERED = 0,
@@ -68,9 +72,12 @@ enum mdm_hl7800_network_state {
 	HL7800_OUT_OF_COVERAGE,
 	HL7800_ROAMING,
 	HL7800_EMERGENCY = 8,
+	/* Laird defined state */
+	HL7800_UNABLE_TO_CONFIGURE = 0xf0
 };
 #define MDM_HL7800_MAX_NETWORK_STATE_SIZE (sizeof("REGISTRATION_DENIED"))
-#define MDM_HL7800_MAX_NETWORK_STATE_STRLEN (MDM_HL7800_MAX_NETWORK_STATE_SIZE - 1)
+#define MDM_HL7800_MAX_NETWORK_STATE_STRLEN                                    \
+	(MDM_HL7800_MAX_NETWORK_STATE_SIZE - 1)
 
 struct mdm_hl7800_compound_event {
 	u32_t code;
