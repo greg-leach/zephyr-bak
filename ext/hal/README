@@ -12,6 +12,10 @@ cmsis
 The ARM Cortex Microcontroller Software Interface Standard (CMSIS) defines a
 set of standard interfaces to ARM Cortex-M SoCs.
 
+lairdconnectivity
+-----------------
+This provides an interface between the Laird Connectivity Bootloader and Zephyr
+
 libmetal
 --------
 libmetal provides a HAL abstraction layer utilized by open-amp
