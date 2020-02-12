@@ -16,8 +16,14 @@ extern "C" {
 #endif
 
 /* The size includes the NUL character, the strlen doesn't */
+#define MDM_HL7800_REVISION_MAX_SIZE 29
+#define MDM_HL7800_REVISION_MAX_STRLEN (MDM_HL7800_REVISION_MAX_SIZE - 1)
+
 #define MDM_HL7800_IMEI_SIZE 16
 #define MDM_HL7800_IMEI_STRLEN (MDM_HL7800_IMEI_SIZE - 1)
+
+#define MDM_HL7800_ICCID_SIZE 21
+#define MDM_HL7800_ICCID_STRLEN (MDM_HL7800_ICCID_SIZE - 1)
 
 #define MDM_HL7800_APN_MAX_SIZE 64
 #define MDM_HL7800_APN_USERNAME_MAX_SIZE 65
@@ -41,13 +47,17 @@ struct mdm_hl7800_apn {
 	char password[MDM_HL7800_APN_PASSWORD_MAX_SIZE];
 };
 
+enum mdm_hl7800_radio_mode { MDM_RAT_CAT_M1 = 0, MDM_RAT_CAT_NB1 };
+
 enum mdm_hl7800_event {
 	HL7800_EVENT_RESERVED = 0,
 	HL7800_EVENT_NETWORK_STATE_CHANGE,
 	HL7800_EVENT_APN_UPDATE,
 	HL7800_EVENT_RSSI,
 	HL7800_EVENT_SINR,
-	HL7800_EVENT_STARTUP_STATE_CHANGE
+	HL7800_EVENT_STARTUP_STATE_CHANGE,
+	HL7800_EVENT_SLEEP_STATE_CHANGE,
+	HL7800_EVENT_RAT,
 };
 
 enum mdm_hl7800_startup_state {
@@ -59,10 +69,6 @@ enum mdm_hl7800_startup_state {
 	HL7800_STARTUP_STATE_UNKNOWN,
 	HL7800_STARTUP_STATE_INACTIVE_SIM
 };
-/* The prefix isn't part of the state string */
-#define MDM_HL7800_MAX_STARTUP_STATE_SIZE (sizeof("WAITING_FOR_ACCESS_CODE"))
-#define MDM_HL7800_MAX_STARTUP_STATE_STRLEN                                    \
-	(MDM_HL7800_MAX_STARTUP_STATE_SIZE - 1)
 
 enum mdm_hl7800_network_state {
 	HL7800_NOT_REGISTERED = 0,
@@ -75,12 +81,17 @@ enum mdm_hl7800_network_state {
 	/* Laird defined state */
 	HL7800_UNABLE_TO_CONFIGURE = 0xf0
 };
-#define MDM_HL7800_MAX_NETWORK_STATE_SIZE (sizeof("REGISTRATION_DENIED"))
-#define MDM_HL7800_MAX_NETWORK_STATE_STRLEN                                    \
-	(MDM_HL7800_MAX_NETWORK_STATE_SIZE - 1)
 
+enum mdm_hl7800_sleep_state {
+	HL7800_SLEEP_STATE_UNINITIALIZED = 0,
+	HL7800_SLEEP_STATE_ASLEEP,
+	HL7800_SLEEP_STATE_WAKING,
+	HL7800_SLEEP_STATE_AWAKE,
+};
+
+/* The modem reports state values as an enumeration and a string */
 struct mdm_hl7800_compound_event {
-	u32_t code;
+	u8_t code;
 	char *string;
 };
 
@@ -136,13 +147,23 @@ char *mdm_hl7800_get_iccid(void);
 char *mdm_hl7800_get_sn(void);
 
 /**
- * @brief Update the Access Point Name, username and password in the modem.
- * 
- * @param apn Access point structure
+ * @brief Update the Access Point Name in the modem.
  * 
  * @retval 0 on success, negative on failure.
  */
-s32_t mdm_hl7800_update_apn(struct mdm_hl7800_apn *access_point);
+s32_t mdm_hl7800_update_apn(char *access_point_name);
+
+/**
+ * @brief Update the Radio Access Technology (mode).
+ *
+ * @retval 0 on success, negative on failure.
+ */
+s32_t mdm_hl7800_update_rat(enum mdm_hl7800_radio_mode value);
+
+/**
+ * @retval true if RAT value is valid
+ */
+bool mdm_hl7800_valid_rat(u8_t value);
 
 /**
  * @brief Register a function that is called when a modem event occurs.
