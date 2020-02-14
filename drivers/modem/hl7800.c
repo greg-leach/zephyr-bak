@@ -1069,6 +1069,8 @@ static int pkt_setup_ip_data(struct net_pkt *pkt, struct hl7800_socket *sock)
 			    &((struct sockaddr_in6 *)&sock->src)->sin6_addr)) {
 			return -1;
 		}
+		src_port = ntohs(net_sin6(&sock->src)->sin6_port);
+		dst_port = ntohs(net_sin6(&sock->dst)->sin6_port);
 
 		hdr_len = sizeof(struct net_ipv6_hdr);
 	} else
@@ -1080,6 +1082,8 @@ static int pkt_setup_ip_data(struct net_pkt *pkt, struct hl7800_socket *sock)
 			    &((struct sockaddr_in *)&sock->src)->sin_addr)) {
 			return -1;
 		}
+		src_port = ntohs(net_sin(&sock->src)->sin_port);
+		dst_port = ntohs(net_sin(&sock->dst)->sin_port);
 
 		hdr_len = sizeof(struct net_ipv4_hdr);
 	}
@@ -1087,7 +1091,7 @@ static int pkt_setup_ip_data(struct net_pkt *pkt, struct hl7800_socket *sock)
 
 #if defined(CONFIG_NET_UDP)
 	if (sock->ip_proto == IPPROTO_UDP) {
-		if (net_udp_create(pkt, src_port, dst_port)) {
+		if (net_udp_create(pkt, dst_port, src_port)) {
 			return -1;
 		}
 
