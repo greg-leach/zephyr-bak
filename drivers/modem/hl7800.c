@@ -126,6 +126,7 @@ enum mdm_control_pins {
 	MDM_UART_RTS,
 	MDM_UART_RX,
 	MDM_UART_CTS,
+	MDM_GPIO6,
 	MAX_MDM_CONTROL_PINS,
 };
 
@@ -199,6 +200,14 @@ static const struct mdm_control_pinconfig pinconfig[] = {
 	PINCONFIG(DT_SWI_HL7800_0_MDM_UART_CTS_GPIOS_CONTROLLER,
 		  DT_SWI_HL7800_0_MDM_UART_CTS_GPIOS_PIN, GPIO_DIR_IN,
 		  (GPIO_DIR_IN | GPIO_PUD_PULL_DOWN)),
+
+	/* MDM_GPIO6 */
+	PINCONFIG(DT_SWI_HL7800_0_MDM_GPIO6_GPIOS_CONTROLLER,
+		  DT_SWI_HL7800_0_MDM_GPIO6_GPIOS_PIN,
+		  (GPIO_DIR_IN | GPIO_INT | GPIO_INT_EDGE |
+		   GPIO_INT_DOUBLE_EDGE),
+		  (GPIO_DIR_IN | GPIO_INT | GPIO_INT_EDGE |
+		   GPIO_INT_DOUBLE_EDGE)),
 };
 
 #define MDM_UART_DEV_NAME DT_SWI_HL7800_0_BUS_NAME
@@ -386,8 +395,10 @@ struct hl7800_iface_ctx {
 	struct device *gpio_port_dev[MAX_MDM_CONTROL_PINS];
 	struct gpio_callback mdm_vgpio_cb;
 	struct gpio_callback mdm_uart_dsr_cb;
+	struct gpio_callback mdm_gpio6_cb;
 	u8_t vgpio_state;
 	u8_t dsr_state;
+	u8_t gpio6_state;
 
 	/* RX specific attributes */
 	struct mdm_receiver_context mdm_ctx;
@@ -1073,7 +1084,7 @@ static int pkt_setup_ip_data(struct net_pkt *pkt, struct hl7800_socket *sock)
 		dst_port = ntohs(net_sin6(&sock->dst)->sin6_port);
 
 		hdr_len = sizeof(struct net_ipv6_hdr);
-	} else
+	}
 #endif
 #if defined(CONFIG_NET_IPV4)
 		if (net_pkt_family(pkt) == AF_INET) {
@@ -1096,7 +1107,7 @@ static int pkt_setup_ip_data(struct net_pkt *pkt, struct hl7800_socket *sock)
 		}
 
 		hdr_len += NET_UDPH_LEN;
-	} else
+	}
 #endif
 #if defined(CONFIG_NET_TCP)
 		if (sock->ip_proto == IPPROTO_TCP) {
@@ -2952,6 +2963,17 @@ void mdm_uart_dsr_callback(struct device *port, struct gpio_callback *cb,
 	Z_LOG(HL7800_IO_LOG_LEVEL, "MDM_UART_DSR:%d", val);
 }
 
+void mdm_gpio6_callback(struct device *port, struct gpio_callback *cb,
+			u32_t pins)
+{
+	u32_t val = 0;
+	gpio_pin_read(ictx.gpio_port_dev[MDM_GPIO6], pinconfig[MDM_GPIO6].pin,
+		      &val);
+	ictx.gpio6_state = val;
+
+	Z_LOG(HL7800_IO_LOG_LEVEL, "MDM_GPIO6:%d", val);
+}
+
 static void modem_reset(void)
 {
 	LOG_INF("Modem Reset");
@@ -3185,6 +3207,10 @@ static int modem_reset_and_configure(void)
 #endif
 
 #ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
+
+	/* enable GPIO6 low power monitoring */
+	SEND_AT_CMD_EXPECT_OK("AT+KHWIOCFG=3,1,6");
+
 	/* Turn on sleep mode */
 	SEND_AT_CMD_EXPECT_OK("AT+KSLEEP=0,2,10");
 
@@ -3840,6 +3866,22 @@ static int hl7800_init(struct device *dev)
 				       pinconfig[MDM_UART_DSR].pin);
 	if (ret) {
 		LOG_ERR("Error enabling uart dsr callback! (%d)", ret);
+		return ret;
+	}
+
+	/* GPIO6 */
+	gpio_init_callback(&ictx.mdm_gpio6_cb, mdm_gpio6_callback,
+			   BIT(pinconfig[MDM_GPIO6].pin));
+	ret = gpio_add_callback(ictx.gpio_port_dev[MDM_GPIO6],
+				&ictx.mdm_gpio6_cb);
+	if (ret) {
+		LOG_ERR("Cannot setup gpio6 callback! (%d)", ret);
+		return ret;
+	}
+	ret = gpio_pin_enable_callback(ictx.gpio_port_dev[MDM_GPIO6],
+				       pinconfig[MDM_GPIO6].pin);
+	if (ret) {
+		LOG_ERR("Error enabling gpio6 callback! (%d)", ret);
 		return ret;
 	}
 

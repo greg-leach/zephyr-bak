@@ -8,70 +8,78 @@ title: Sierra Wireless HL7800 LTE-M/NB-IoT Modem
 version: 0.1
 
 description: >
-    This is a representation of the Sierra Wireless HL7800 LTE-M/NB-IoT modem.
+  This is a representation of the Sierra Wireless HL7800 LTE-M/NB-IoT modem.
 
-inherits:
-    !include uart-device.yaml
+inherits: !include uart-device.yaml
 
 properties:
-    compatible:
-      type: string
-      category: required
-      constraint: "swi,hl7800"
-      generation: define
+  compatible:
+    type: string
+    category: required
+    constraint: "swi,hl7800"
+    generation: define
 
-    mdm-wake-gpios:
-      type: compound
-      category: required
-      generation: define, use-prop-name
+  mdm-wake-gpios:
+    type: compound
+    category: required
+    generation: define, use-prop-name
 
-    mdm-reset-gpios:
-      type: compound
-      category: required
-      generation: define, use-prop-name
+  mdm-reset-gpios:
+    type: compound
+    category: required
+    generation: define, use-prop-name
 
-    mdm-pwr-on-gpios:
-      type: compound
-      category: required
-      generation: define, use-prop-name
+  mdm-pwr-on-gpios:
+    type: compound
+    category: required
+    generation: define, use-prop-name
 
-    mdm-fast-shutd-gpios:
-      type: compound
-      category: required
-      generation: define, use-prop-name
+  mdm-fast-shutd-gpios:
+    type: compound
+    category: required
+    generation: define, use-prop-name
 
-    mdm-uart-dtr-gpios:
-      type: compound
-      category: required
-      generation: define, use-prop-name
+  mdm-uart-dtr-gpios:
+    type: compound
+    category: required
+    generation: define, use-prop-name
 
-    mdm-vgpio-gpios:
-      type: compound
-      category: required
-      generation: define, use-prop-name
+  mdm-vgpio-gpios:
+    type: compound
+    category: required
+    generation: define, use-prop-name
 
-    mdm-uart-dsr-gpios:
-      type: compound
-      category: required
-      generation: define, use-prop-name
+  mdm-uart-dsr-gpios:
+    type: compound
+    category: required
+    generation: define, use-prop-name
 
-    mdm-uart-tx-gpios:
-      type: compound
-      category: required
-      generation: define, use-prop-name
+  mdm-uart-tx-gpios:
+    type: compound
+    category: required
+    generation: define, use-prop-name
 
-    mdm-uart-rts-gpios:
-      type: compound
-      category: required
-      generation: define, use-prop-name
+  mdm-uart-rts-gpios:
+    type: compound
+    category: required
+    generation: define, use-prop-name
 
-    mdm-uart-rx-gpios:
-      type: compound
-      category: required
-      generation: define, use-prop-name
+  mdm-uart-rx-gpios:
+    type: compound
+    category: required
+    generation: define, use-prop-name
 
-    mdm-uart-cts-gpios:
-      type: compound
-      category: required
-      generation: define, use-prop-name
-...
+  mdm-uart-cts-gpios:
+    type: compound
+    category: required
+    generation: define, use-prop-name
+
+  mdm-gpio2-gpios:
+    type: compound
+    category: required
+    generation: define, use-prop-name
+
+  mdm-gpio6-gpios:
+    type: compound
+    category: required
+    generation: define, use-prop-name
