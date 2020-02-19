@@ -385,9 +385,9 @@ struct hl7800_iface_ctx {
 	struct gpio_callback mdm_vgpio_cb;
 	struct gpio_callback mdm_uart_dsr_cb;
 	struct gpio_callback mdm_gpio6_cb;
-	u8_t vgpio_state;
-	u8_t dsr_state;
-	u8_t gpio6_state;
+	u32_t vgpio_state;
+	u32_t dsr_state;
+	u32_t gpio6_state;
 
 	/* RX specific attributes */
 	struct mdm_receiver_context mdm_ctx;
@@ -407,6 +407,7 @@ struct hl7800_iface_ctx {
 	/* work */
 	struct k_delayed_work iface_status_work;
 	struct k_delayed_work dns_work;
+	struct k_work mdm_vgpio_work;
 
 	/* modem info */
 	/* NOTE: make sure length is +1 for null char */
@@ -454,6 +455,8 @@ static void generate_network_state_event(void);
 static void generate_startup_state_event(void);
 static void generate_sleep_state_event(void);
 static int modem_boot_handler(char *reason);
+
+static void mdm_vgpio_work_cb(struct k_work *item);
 
 /*** Verbose Debugging Functions ***/
 #if defined(HL7800_ENABLE_VERBOSE_MODEM_RECV_HEXDUMP)
@@ -1107,7 +1110,7 @@ static int pkt_setup_ip_data(struct net_pkt *pkt, struct hl7800_socket *sock)
 	}
 #endif
 #if defined(CONFIG_NET_IPV4)
-		if (net_pkt_family(pkt) == AF_INET) {
+	if (net_pkt_family(pkt) == AF_INET) {
 		if (net_ipv4_create(
 			    pkt, &((struct sockaddr_in *)&sock->dst)->sin_addr,
 			    &((struct sockaddr_in *)&sock->src)->sin_addr)) {
@@ -1130,7 +1133,7 @@ static int pkt_setup_ip_data(struct net_pkt *pkt, struct hl7800_socket *sock)
 	}
 #endif
 #if defined(CONFIG_NET_TCP)
-		if (sock->ip_proto == IPPROTO_TCP) {
+	if (sock->ip_proto == IPPROTO_TCP) {
 		NET_PKT_DATA_ACCESS_DEFINE(tcp_access, struct net_tcp_hdr);
 		struct net_tcp_hdr *tcp;
 
@@ -2991,47 +2994,62 @@ static void prepare_io_for_reset(void)
 	modem_assert_uart_dtr(false);
 }
 
-void mdm_vgpio_callback(struct device *port, struct gpio_callback *cb,
-			u32_t pins)
+static void mdm_vgpio_work_cb(struct k_work *item)
 {
-	u32_t val = 0;
-	gpio_pin_read(ictx.gpio_port_dev[MDM_VGPIO], pinconfig[MDM_VGPIO].pin,
-		      &val);
-	ictx.vgpio_state = val;
-	if (!val) {
-		prepare_io_for_reset();
+	ARG_UNUSED(item);
+
+	hl7800_lock();
+	if (!ictx.vgpio_state) {
 		set_sleep_state(HL7800_SLEEP_STATE_ASLEEP);
 		if (ictx.iface && ictx.initialized) {
 			net_if_down(ictx.iface);
 		}
 	} else {
 		set_sleep_state(HL7800_SLEEP_STATE_WAKING);
+	}
+	hl7800_unlock();
+}
+
+void mdm_vgpio_callback_isr(struct device *port, struct gpio_callback *cb,
+			    u32_t pins)
+{
+	gpio_pin_read(ictx.gpio_port_dev[MDM_VGPIO], pinconfig[MDM_VGPIO].pin,
+		      &ictx.vgpio_state);
+
+	if (!ictx.vgpio_state) {
+		prepare_io_for_reset();
+	} else {
+		/* The peripheral must be enabled in ISR context because the driver may be
+		 * waiting for +KSUP or waiting to send commands.  
+		 * This can occur, for example, during a modem reset.
+	 	 */
 		power_on_uart();
 	}
 
-	Z_LOG(HL7800_IO_LOG_LEVEL, "VGPIO:%d", val);
+	Z_LOG(HL7800_IO_LOG_LEVEL, "VGPIO:%d", ictx.vgpio_state);
+
+	/* When the network state changes a semaphore must be taken.
+	 * This can't be done in interrupt context because the wait time != 0.
+	 */
+	k_work_submit_to_queue(&hl7800_workq, &ictx.mdm_vgpio_work);
 }
 
-void mdm_uart_dsr_callback(struct device *port, struct gpio_callback *cb,
-			   u32_t pins)
+void mdm_uart_dsr_callback_isr(struct device *port, struct gpio_callback *cb,
+			       u32_t pins)
 {
-	u32_t val = 0;
 	gpio_pin_read(ictx.gpio_port_dev[MDM_UART_DSR],
-		      pinconfig[MDM_UART_DSR].pin, &val);
-	ictx.dsr_state = val;
+		      pinconfig[MDM_UART_DSR].pin, &ictx.dsr_state);
 
-	Z_LOG(HL7800_IO_LOG_LEVEL, "MDM_UART_DSR:%d", val);
+	Z_LOG(HL7800_IO_LOG_LEVEL, "MDM_UART_DSR:%d", ictx.dsr_state);
 }
 
-void mdm_gpio6_callback(struct device *port, struct gpio_callback *cb,
-			u32_t pins)
+void mdm_gpio6_callback_isr(struct device *port, struct gpio_callback *cb,
+			    u32_t pins)
 {
-	u32_t val = 0;
 	gpio_pin_read(ictx.gpio_port_dev[MDM_GPIO6], pinconfig[MDM_GPIO6].pin,
-		      &val);
-	ictx.gpio6_state = val;
+		      &ictx.gpio6_state);
 
-	Z_LOG(HL7800_IO_LOG_LEVEL, "MDM_GPIO6:%d", val);
+	Z_LOG(HL7800_IO_LOG_LEVEL, "MDM_GPIO6:%d", ictx.gpio6_state);
 }
 
 static void modem_reset(void)
@@ -3858,7 +3876,7 @@ static int hl7800_init(struct device *dev)
 
 	k_delayed_work_init(&ictx.iface_status_work, iface_status_work_cb);
 	k_delayed_work_init(&ictx.dns_work, dns_work_cb);
-
+	k_work_init(&ictx.mdm_vgpio_work, mdm_vgpio_work_cb);
 	ictx.last_socket_id = 0;
 
 	/* setup port devices and pin directions */
@@ -3882,7 +3900,7 @@ static int hl7800_init(struct device *dev)
 
 	/* setup input pin callbacks */
 	/* VGPIO */
-	gpio_init_callback(&ictx.mdm_vgpio_cb, mdm_vgpio_callback,
+	gpio_init_callback(&ictx.mdm_vgpio_cb, mdm_vgpio_callback_isr,
 			   BIT(pinconfig[MDM_VGPIO].pin));
 	ret = gpio_add_callback(ictx.gpio_port_dev[MDM_VGPIO],
 				&ictx.mdm_vgpio_cb);
@@ -3898,7 +3916,7 @@ static int hl7800_init(struct device *dev)
 	}
 
 	/* UART DSR */
-	gpio_init_callback(&ictx.mdm_uart_dsr_cb, mdm_uart_dsr_callback,
+	gpio_init_callback(&ictx.mdm_uart_dsr_cb, mdm_uart_dsr_callback_isr,
 			   BIT(pinconfig[MDM_UART_DSR].pin));
 	ret = gpio_add_callback(ictx.gpio_port_dev[MDM_UART_DSR],
 				&ictx.mdm_uart_dsr_cb);
@@ -3914,7 +3932,7 @@ static int hl7800_init(struct device *dev)
 	}
 
 	/* GPIO6 */
-	gpio_init_callback(&ictx.mdm_gpio6_cb, mdm_gpio6_callback,
+	gpio_init_callback(&ictx.mdm_gpio6_cb, mdm_gpio6_callback_isr,
 			   BIT(pinconfig[MDM_GPIO6].pin));
 	ret = gpio_add_callback(ictx.gpio_port_dev[MDM_GPIO6],
 				&ictx.mdm_gpio6_cb);
