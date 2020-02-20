@@ -1962,6 +1962,12 @@ static void iface_status_work_cb(struct k_work *work)
 			LOG_DBG("HL7800 iface DOWN");
 			net_if_down(ictx.iface);
 		}
+
+		if (ictx.iface && net_if_is_up(ictx.iface)) {
+			set_network_state(HL7800_OUT_OF_COVERAGE_NETWORK_UP);
+		} else {
+			set_network_state(HL7800_OUT_OF_COVERAGE_NETWORK_DOWN);
+		}
 		break;
 	default:
 		if (ictx.iface && net_if_is_up(ictx.iface)) {
@@ -1999,7 +2005,9 @@ static char *get_network_state_string(enum mdm_hl7800_network_state state)
         PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800, OUT_OF_COVERAGE);
         PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800, ROAMING);
         PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800, EMERGENCY);
-		PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800, UNABLE_TO_CONFIGURE);
+        PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800, UNABLE_TO_CONFIGURE);
+        PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800, OUT_OF_COVERAGE_NETWORK_UP);
+        PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800, OUT_OF_COVERAGE_NETWORK_DOWN);
     default:
         return "UNKNOWN";
     }
