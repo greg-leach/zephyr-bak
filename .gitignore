@@ -47,3 +47,8 @@ GRTAGS
 GTAGS
 
 .idea
+
+# Laird Connectivity ignores
+boards/arm/README.md
+boards/arm/pinnacle_100_dvk/
+ext/hal/lairdconnectivity/
