@@ -198,7 +198,7 @@ config MODEM_HL7800_EDRX_VALUE
 	default "0101"
 	help
 	  Half a byte in a 4-bit format. The eDRX value refers to bit 4 to 1
-	  of octet 3 of the Extended DRX parameters information element.
+	  of octet 3 of the Extended DRX parameters information element. Default value is 81.92 seconds.
 
 endif # MODEM_HL7800_EDRX
 
@@ -209,14 +209,14 @@ config MODEM_HL7800_PSM_PERIODIC_TAU
 	default "10000010"
 	help
 	  Requested extended periodic TAU (tracking area update) value (T3412)
-	  to be allocated to the UE in E-UTRAN. One byte in an 8-bit format.
+	  to be allocated to the UE in E-UTRAN. One byte in an 8-bit format. Default value is 1 minute.
 
 config MODEM_HL7800_PSM_ACTIVE_TIME
 	string "Requested active time"
 	default "00001111"
 	help
 	  Requested Active Time value (T3324) to be allocated to the UE.
-	  One byte in an 8-bit format.
+	  One byte in an 8-bit format. Default value is 30 seconds.
 
 endif # MODEM_HL7800_PSM
 

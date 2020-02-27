@@ -79,16 +79,12 @@ enum mdm_hl7800_network_state {
 	HL7800_ROAMING,
 	HL7800_EMERGENCY = 8,
 	/* Laird defined states */
-	HL7800_UNABLE_TO_CONFIGURE = 0xf0,
-	/* The network can still be up when out of coverage is reported. */
-	HL7800_OUT_OF_COVERAGE_NETWORK_UP,
-	HL7800_OUT_OF_COVERAGE_NETWORK_DOWN
+	HL7800_UNABLE_TO_CONFIGURE = 0xf0
 };
 
 enum mdm_hl7800_sleep_state {
 	HL7800_SLEEP_STATE_UNINITIALIZED = 0,
 	HL7800_SLEEP_STATE_ASLEEP,
-	HL7800_SLEEP_STATE_WAKING,
 	HL7800_SLEEP_STATE_AWAKE,
 };
 
