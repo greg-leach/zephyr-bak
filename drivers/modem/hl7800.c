@@ -3039,7 +3039,8 @@ static void mdm_vgpio_work_cb(struct k_work *item)
 		if (ictx.sleep_state != HL7800_SLEEP_STATE_ASLEEP) {
 			set_sleep_state(HL7800_SLEEP_STATE_ASLEEP);
 		}
-		if (ictx.iface && ictx.initialized) {
+		if (ictx.iface && ictx.initialized &&
+		    net_if_is_up(ictx.iface)) {
 			net_if_down(ictx.iface);
 		}
 	}
@@ -3190,7 +3191,7 @@ static int modem_reset_and_configure(void)
 #endif
 
 	ictx.restarting = true;
-	if (ictx.iface) {
+	if (ictx.iface && net_if_is_up(ictx.iface)) {
 		net_if_down(ictx.iface);
 	}
 
@@ -3447,7 +3448,7 @@ static int hl7800_power_off(void)
 		return ret;
 	}
 	/* bring the iface down */
-	if (ictx.iface) {
+	if (ictx.iface && net_if_is_up(ictx.iface)) {
 		net_if_down(ictx.iface);
 	}
 	LOG_INF("Modem powered off");
