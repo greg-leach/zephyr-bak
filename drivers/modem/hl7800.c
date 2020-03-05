@@ -477,6 +477,7 @@ static void generate_startup_state_event(void);
 static void generate_sleep_state_event(void);
 static int modem_boot_handler(char *reason);
 static void mdm_vgpio_work_cb(struct k_work *item);
+static bool is_network_ready(void);
 
 #ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
 static bool is_cmd_ready()
@@ -3476,6 +3477,12 @@ void mdm_hl7800_register_event_callback(
 
 /*** OFFLOAD FUNCTIONS ***/
 
+static bool is_network_ready(void)
+{
+	return (ictx.sleep_state == HL7800_SLEEP_STATE_AWAKE &&
+		net_if_is_up(ictx.iface));
+}
+
 static int offload_get(sa_family_t family, enum net_sock_type type,
 		       enum net_ip_protocol ip_proto,
 		       struct net_context **context)
@@ -3483,7 +3490,7 @@ static int offload_get(sa_family_t family, enum net_sock_type type,
 	int ret = 0;
 	struct hl7800_socket *sock = NULL;
 
-	if (ictx.sleep_state == HL7800_SLEEP_STATE_ASLEEP) {
+	if (!is_network_ready()) {
 		return -EBUSY;
 	}
 
@@ -3601,7 +3608,7 @@ static int offload_connect(struct net_context *context,
 	char cmd_con[sizeof("AT+KTCPCNX=##")];
 	struct hl7800_socket *sock;
 
-	if (ictx.sleep_state == HL7800_SLEEP_STATE_ASLEEP) {
+	if (!is_network_ready()) {
 		return -EBUSY;
 	}
 
@@ -3716,7 +3723,7 @@ static int offload_sendto(struct net_pkt *pkt, const struct sockaddr *dst_addr,
 	struct hl7800_socket *sock;
 	int ret, dst_port = 0;
 
-	if (ictx.sleep_state == HL7800_SLEEP_STATE_ASLEEP) {
+	if (!is_network_ready()) {
 		return -EBUSY;
 	}
 
@@ -3838,7 +3845,7 @@ static int offload_put(struct net_context *context)
 	hl7800_lock();
 	/* if GPRS connection needs to be reconfigured,
 	*  we dont need to issue the close command, just need to cleanup */
-	if (ictx.reconfig_GPRS) {
+	if (ictx.reconfig_GPRS || !net_if_is_up(ictx.iface)) {
 		LOG_DBG("Skip issuing close socket cmd");
 		goto cleanup;
 	}
