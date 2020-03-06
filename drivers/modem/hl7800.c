@@ -4050,10 +4050,12 @@ static int hl7800_init(struct device *dev)
 	}
 
 	/* start RX thread */
-	k_thread_create(&hl7800_rx_thread, hl7800_rx_stack,
-			K_THREAD_STACK_SIZEOF(hl7800_rx_stack),
-			(k_thread_entry_t)hl7800_rx, NULL, NULL, NULL,
-			RX_THREAD_PRIORITY, 0, K_NO_WAIT);
+	k_thread_name_set(
+		k_thread_create(&hl7800_rx_thread, hl7800_rx_stack,
+				K_THREAD_STACK_SIZEOF(hl7800_rx_stack),
+				(k_thread_entry_t)hl7800_rx, NULL, NULL, NULL,
+				RX_THREAD_PRIORITY, 0, K_NO_WAIT),
+		"hl7800 rx");
 
 	/* init RSSI query */
 	k_delayed_work_init(&ictx.rssi_query_work, hl7800_rssi_query_work);
