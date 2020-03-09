@@ -429,6 +429,7 @@ struct hl7800_iface_ctx {
 	struct k_delayed_work iface_status_work;
 	struct k_delayed_work dns_work;
 	struct k_work mdm_vgpio_work;
+	struct k_delayed_work mdm_reset_work;
 
 	/* modem info */
 	/* NOTE: make sure length is +1 for null char */
@@ -477,6 +478,7 @@ static void generate_startup_state_event(void);
 static void generate_sleep_state_event(void);
 static int modem_boot_handler(char *reason);
 static void mdm_vgpio_work_cb(struct k_work *item);
+static void mdm_reset_work_callback(struct k_work *item);
 static bool is_network_ready(void);
 
 #ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
@@ -870,7 +872,8 @@ error:
 		/* After a reset the APN will be re-read from the modem 
 		 * and an event will be generated.
 		 */
-		return mdm_hl7800_reset();
+		k_delayed_work_submit_to_queue(&hl7800_workq,
+					       &ictx.mdm_reset_work, K_NO_WAIT);
 	}
 	return ret;
 }
@@ -3420,6 +3423,13 @@ error:
 	return 0;
 }
 
+static void mdm_reset_work_callback(struct k_work *item)
+{
+	ARG_UNUSED(item);
+
+	mdm_hl7800_reset();
+}
+
 s32_t mdm_hl7800_reset(void)
 {
 	int ret;
@@ -3950,6 +3960,7 @@ static int hl7800_init(struct device *dev)
 	k_delayed_work_init(&ictx.iface_status_work, iface_status_work_cb);
 	k_delayed_work_init(&ictx.dns_work, dns_work_cb);
 	k_work_init(&ictx.mdm_vgpio_work, mdm_vgpio_work_cb);
+	k_delayed_work_init(&ictx.mdm_reset_work, mdm_reset_work_callback);
 	ictx.last_socket_id = 0;
 
 	/* setup port devices and pin directions */
