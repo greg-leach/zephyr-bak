@@ -15,6 +15,8 @@
 extern "C" {
 #endif
 
+#include <time.h>
+
 /* The size includes the NUL character, the strlen doesn't */
 #define MDM_HL7800_REVISION_MAX_SIZE 29
 #define MDM_HL7800_REVISION_MAX_STRLEN (MDM_HL7800_REVISION_MAX_SIZE - 1)
@@ -185,6 +187,16 @@ void mdm_hl7800_register_event_callback(
  * later than the modem.
  */
 void mdm_hl7800_generate_status_events(void);
+
+/**
+ * @brief Get the local time from the modem's real time clock.
+ * 
+ * @param tm time structure
+ * @param offset The amount the local time is offset from GMT/UTC in seconds.
+ * 
+ * @param 0 if successful
+ */
+s32_t mdm_hl7800_get_local_time(struct tm *tm, s32_t *offset);
 
 #ifdef __cplusplus
 }
