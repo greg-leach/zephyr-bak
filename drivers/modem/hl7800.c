@@ -295,6 +295,26 @@ static const struct mdm_control_pinconfig pinconfig[] = {
 #define MAX_PROFILE_LINE_LENGTH                                                \
 	MAX(sizeof(PROFILE_LINE_1), sizeof(PROFILE_LINE_2))
 
+/* The ? can be a + or - */
+const char TIME_STRING_FORMAT[] = "\"yy/MM/dd,hh:mm:ss?zz\"";
+#define TIME_STRING_DIGIT_STRLEN 2
+#define TIME_STRING_SEPARATOR_STRLEN 1
+#define TIME_STRING_PLUS_MINUS_INDEX (6 * 3)
+#define TIME_STRING_FIRST_SEPARATOR_INDEX 0
+#define TIME_STRING_FIRST_DIGIT_INDEX 1
+#define TIME_STRING_TO_TM_STRUCT_YEAR_OFFSET (2000 - 1900)
+
+/* Time structure min, max */
+#define TM_YEAR_RANGE 0, 99
+#define TM_MONTH_RANGE_PLUS_1 1, 12
+#define TM_DAY_RANGE 1, 31
+#define TM_HOUR_RANGE 0, 23
+#define TM_MIN_RANGE 0, 59
+#define TM_SEC_RANGE 0, 60 /* leap second */
+
+#define MAX_QUARTER_HOUR_OFFSET 96
+#define SECONDS_PER_QUARTER_HOUR (15 * 60)
+
 #define SEND_AT_CMD_ONCE_EXPECT_OK(c)                                          \
 	do {                                                                   \
 		ret = send_at_cmd(NULL, (c), MDM_CMD_SEND_TIMEOUT, 0, false);  \
@@ -456,6 +476,9 @@ struct hl7800_iface_ctx {
 	enum mdm_hl7800_network_state network_state;
 	enum net_operator_status operator_status;
 	void (*event_callback)(enum mdm_hl7800_event event, void *event_data);
+	struct tm local_time;
+	s32_t local_time_offset;
+	bool local_time_valid;
 };
 
 struct cmd_handler {
@@ -480,6 +503,8 @@ static int modem_boot_handler(char *reason);
 static void mdm_vgpio_work_cb(struct k_work *item);
 static void mdm_reset_work_callback(struct k_work *item);
 static bool is_network_ready(void);
+static bool convert_time_string_to_struct(struct tm *tm, s32_t *offset,
+					  char *time_string);
 
 #ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
 static bool is_cmd_ready()
@@ -844,7 +869,7 @@ s32_t mdm_hl7800_send_at_cmd(const u8_t *data)
 	return ret;
 }
 
-/* The access point name (and username and password) are stored in the modem's 
+/* The access point name (and username and password) are stored in the modem's
  * non-volatile memory.
  */
 s32_t mdm_hl7800_update_apn(char *access_point_name)
@@ -869,7 +894,7 @@ error:
 	allow_sleep(goBackToSleep);
 	hl7800_unlock();
 	if (ret >= 0) {
-		/* After a reset the APN will be re-read from the modem 
+		/* After a reset the APN will be re-read from the modem
 		 * and an event will be generated.
 		 */
 		k_delayed_work_submit_to_queue(&hl7800_workq,
@@ -917,6 +942,28 @@ error:
 	}
 	/* restore the sleep state */
 	allow_sleep(goBackToSleep);
+	hl7800_unlock();
+	return ret;
+}
+
+s32_t mdm_hl7800_get_local_time(struct tm *tm, s32_t *offset)
+{
+	int ret;
+
+	ictx.local_time_valid = false;
+
+	hl7800_lock();
+	bool goBackToSleep = ictx.allowSleep;
+	wakeup_hl7800();
+	ictx.last_socket_id = 0;
+	ret = send_at_cmd(NULL, "AT+CCLK?", MDM_CMD_SEND_TIMEOUT, 0, false);
+	allow_sleep(goBackToSleep);
+	if (ictx.local_time_valid) {
+		memcpy(tm, &ictx.local_time, sizeof(struct tm));
+		memcpy(offset, &ictx.local_time_offset, sizeof(*offset));
+	} else {
+		ret = -EIO;
+	}
 	hl7800_unlock();
 	return ret;
 }
@@ -2059,6 +2106,100 @@ static bool on_cmd_network_report_query(struct net_buf **buf, u16_t len)
 	return true;
 }
 
+/* Handler: +CCLK: "yy/MM/dd,hh:mm:ss±zz" */
+static bool on_cmd_rtc_query(struct net_buf **buf, u16_t len)
+{
+	struct net_buf *frag = NULL;
+	size_t str_len = strlen(TIME_STRING_FORMAT);
+	char rtc_string[sizeof(TIME_STRING_FORMAT)];
+	memset(rtc_string, 0, sizeof(rtc_string));
+	ictx.local_time_valid = false;
+
+	wait_for_modem_data_and_newline(buf, net_buf_frags_len(*buf),
+					sizeof(TIME_STRING_FORMAT));
+
+	frag = NULL;
+	len = net_buf_findcrlf(*buf, &frag);
+	if (!frag) {
+		goto done;
+	}
+	if (len != str_len) {
+		LOG_WRN("Unexpected length for RTC string %d (expected:%d)", len,
+			str_len);
+	} else {
+		net_buf_linearize(rtc_string, str_len, *buf, 0, str_len);
+		LOG_INF("RTC string: '%s'", log_strdup(rtc_string));
+		ictx.local_time_valid = convert_time_string_to_struct(
+			&ictx.local_time, &ictx.local_time_offset, rtc_string);
+	}
+done:
+	return true;
+}
+
+static bool valid_time_string(const char *time_string)
+{
+	/* Ensure the all the expected delimiters are present */
+	size_t offset = TIME_STRING_DIGIT_STRLEN + TIME_STRING_SEPARATOR_STRLEN;
+	size_t i = TIME_STRING_FIRST_SEPARATOR_INDEX;
+	for (; i < TIME_STRING_PLUS_MINUS_INDEX; i += offset) {
+		if (time_string[i] != TIME_STRING_FORMAT[i]) {
+			return false;
+		}
+	}
+	/* The last character is the offset from UTC and can be either
+	 * positive or negative.  The last " is also handled here. */
+	if ((time_string[i] == '+' || time_string[i] == '-') &&
+	    (time_string[i + offset] == '"')) {
+		return true;
+	}
+	return false;
+}
+
+int get_next_time_string_digit(int *failure_cnt, char **pp, int min, int max)
+{
+	char digits[TIME_STRING_DIGIT_STRLEN + SIZE_OF_NUL];
+	memset(digits, 0, sizeof(digits));
+	memcpy(digits, *pp, TIME_STRING_DIGIT_STRLEN);
+	*pp += TIME_STRING_DIGIT_STRLEN + TIME_STRING_SEPARATOR_STRLEN;
+	int result = strtol(digits, NULL, 0);
+	if (result > max) {
+		*failure_cnt += 1;
+		return max;
+	} else if (result < min) {
+		*failure_cnt += 1;
+		return min;
+	} else {
+		return result;
+	}
+}
+
+static bool convert_time_string_to_struct(struct tm *tm, s32_t *offset,
+					  char *time_string)
+{
+	int fc = 0;
+	char *ptr = time_string;
+	if (!valid_time_string(ptr)) {
+		return false;
+	}
+	ptr = &ptr[TIME_STRING_FIRST_DIGIT_INDEX];
+	tm->tm_year = TIME_STRING_TO_TM_STRUCT_YEAR_OFFSET +
+		      get_next_time_string_digit(&fc, &ptr, TM_YEAR_RANGE);
+	tm->tm_mon =
+		get_next_time_string_digit(&fc, &ptr, TM_MONTH_RANGE_PLUS_1) -
+		1;
+	tm->tm_mday = get_next_time_string_digit(&fc, &ptr, TM_DAY_RANGE);
+	tm->tm_hour = get_next_time_string_digit(&fc, &ptr, TM_HOUR_RANGE);
+	tm->tm_min = get_next_time_string_digit(&fc, &ptr, TM_MIN_RANGE);
+	tm->tm_sec = get_next_time_string_digit(&fc, &ptr, TM_SEC_RANGE);
+	tm->tm_isdst = 0;
+	*offset =
+		(s32_t)get_next_time_string_digit(&fc, &ptr,
+						  -1 * MAX_QUARTER_HOUR_OFFSET,
+						  MAX_QUARTER_HOUR_OFFSET) *
+		SECONDS_PER_QUARTER_HOUR;
+	return (fc == 0);
+}
+
 /* Handler: +CEREG: <stat>[,[<lac>],[<ci>],[<AcT>]
 *  [,[<cause_type>],[<reject_cause>] [,[<Active-Time>],[<Periodic-TAU>]]]] */
 static bool on_cmd_network_report(struct net_buf **buf, u16_t len)
@@ -2122,7 +2263,7 @@ static bool on_cmd_atcmdinfo_rssi(struct net_buf **buf, u16_t len)
 	ictx.mdm_sinr = strtol(delims[3] + 1, NULL, 10);
 	if ((delims[1] - delims[0]) == 1) {
 		/* there is no value between the first and second
-		*  delimiter, signal is unknown 
+		*  delimiter, signal is unknown
 		*/
 		LOG_INF("RSSI (RSRP): UNKNOWN");
 	} else {
@@ -2764,6 +2905,7 @@ static void hl7800_rx(void)
 		CMD_HANDLER("+WPPP: 1,1,", atcmdinfo_pdp_authentication_cfg),
 		CMD_HANDLER("+CGDCONT: 1", atcmdinfo_pdp_context),
 		CMD_HANDLER("AT+CEREG?", network_report_query),
+		CMD_HANDLER("+CCLK: ", rtc_query),
 
 		/* UNSOLICITED modem information */
 		/* mobile startup report */
@@ -3066,7 +3208,7 @@ void mdm_vgpio_callback_isr(struct device *port, struct gpio_callback *cb,
 		check_hl7800_awake();
 	} else {
 		/* The peripheral must be enabled in ISR context because the driver may be
-		 * waiting for +KSUP or waiting to send commands.  
+		 * waiting for +KSUP or waiting to send commands.
 		 * This can occur, for example, during a modem reset.
 	 	 */
 		power_on_uart();
@@ -3151,8 +3293,8 @@ static int modem_boot_handler(char *reason)
 		LOG_INF("Modem booted!");
 	}
 
-	/* Turn OFF EPS network registration status reporting because 
-	 * it isn't needed until after initialization is complete. 
+	/* Turn OFF EPS network registration status reporting because
+	 * it isn't needed until after initialization is complete.
 	 */
 	SEND_AT_CMD_EXPECT_OK("AT+CEREG=0");
 
@@ -3175,7 +3317,7 @@ static int modem_boot_handler(char *reason)
 	__ASSERT(!ictx.mdm_echo_is_on, "Echo should be off");
 
 	/* The Laird bootloader puts the modem into airplane mode ("AT+CFUN=4,0").
-	 * The radio is enabled here because airplane mode 
+	 * The radio is enabled here because airplane mode
 	 * survives reset and power removal.
 	 */
 	SEND_AT_CMD_EXPECT_OK("AT+CFUN=1,0");
@@ -3206,7 +3348,7 @@ reboot:
 	modem_run();
 	ret = modem_boot_handler("Initialization");
 	if (!ictx.mdm_startup_reporting_on) {
-		/* Turn on mobile start-up reporting for next reset. 
+		/* Turn on mobile start-up reporting for next reset.
 		 * It will indicate if SIM is present.
 		 * Its value is saved in non-volatile memory on the HL7800.
 		 */
@@ -3404,7 +3546,7 @@ reboot:
 	/* Turn on EPS network registration status reporting */
 	SEND_AT_CMD_EXPECT_OK("AT+CEREG=4");
 
-	/* The modem has been initialized and now the network interface can be 
+	/* The modem has been initialized and now the network interface can be
 	 * started in the CEREG message handler.
 	 */
 	LOG_INF("Modem ready!");
