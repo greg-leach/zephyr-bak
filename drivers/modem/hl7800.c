@@ -311,8 +311,7 @@ const char TIME_STRING_FORMAT[] = "\"yy/MM/dd,hh:mm:ss?zz\"";
 #define TM_HOUR_RANGE 0, 23
 #define TM_MIN_RANGE 0, 59
 #define TM_SEC_RANGE 0, 60 /* leap second */
-
-#define MAX_QUARTER_HOUR_OFFSET 96
+#define QUARTER_HOUR_RANGE 0, 96
 #define SECONDS_PER_QUARTER_HOUR (15 * 60)
 
 #define SEND_AT_CMD_ONCE_EXPECT_OK(c)                                          \
@@ -2124,8 +2123,8 @@ static bool on_cmd_rtc_query(struct net_buf **buf, u16_t len)
 		goto done;
 	}
 	if (len != str_len) {
-		LOG_WRN("Unexpected length for RTC string %d (expected:%d)", len,
-			str_len);
+		LOG_WRN("Unexpected length for RTC string %d (expected:%d)",
+			len, str_len);
 	} else {
 		net_buf_linearize(rtc_string, str_len, *buf, 0, str_len);
 		LOG_INF("RTC string: '%s'", log_strdup(rtc_string));
@@ -2192,11 +2191,12 @@ static bool convert_time_string_to_struct(struct tm *tm, s32_t *offset,
 	tm->tm_min = get_next_time_string_digit(&fc, &ptr, TM_MIN_RANGE);
 	tm->tm_sec = get_next_time_string_digit(&fc, &ptr, TM_SEC_RANGE);
 	tm->tm_isdst = 0;
-	*offset =
-		(s32_t)get_next_time_string_digit(&fc, &ptr,
-						  -1 * MAX_QUARTER_HOUR_OFFSET,
-						  MAX_QUARTER_HOUR_OFFSET) *
-		SECONDS_PER_QUARTER_HOUR;
+	*offset = (s32_t)get_next_time_string_digit(&fc, &ptr,
+						    QUARTER_HOUR_RANGE) *
+		  SECONDS_PER_QUARTER_HOUR;
+	if (time_string[TIME_STRING_PLUS_MINUS_INDEX] == '-') {
+		*offset *= -1;
+	}
 	return (fc == 0);
 }
 
