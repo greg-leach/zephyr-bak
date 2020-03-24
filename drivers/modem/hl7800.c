@@ -258,8 +258,7 @@ static const struct mdm_control_pinconfig pinconfig[] = {
 
 #define MDM_MANUFACTURER_LENGTH 16
 #define MDM_MODEL_LENGTH 7
-#define MDM_SN_LENGTH 15
-#define MDM_SN_RESPONSE_LENGTH MDM_SN_LENGTH + 7
+#define MDM_SN_RESPONSE_LENGTH MDM_HL7800_SERIAL_NUMBER_SIZE + 7
 #define MDM_NETWORK_STATUS_LENGTH 45
 
 #define MDM_TOP_BAND_SIZE 4
@@ -456,7 +455,7 @@ struct hl7800_iface_ctx {
 	char mdm_model[MDM_MODEL_LENGTH];
 	char mdm_revision[MDM_HL7800_REVISION_MAX_SIZE];
 	char mdm_imei[MDM_HL7800_IMEI_SIZE];
-	char mdm_sn[MDM_SN_LENGTH];
+	char mdm_sn[MDM_HL7800_SERIAL_NUMBER_SIZE];
 	char mdm_network_status[MDM_NETWORK_STATUS_LENGTH];
 	char mdm_iccid[MDM_HL7800_ICCID_SIZE];
 	u8_t mdm_startup_state;
@@ -1602,7 +1601,6 @@ static bool on_cmd_atcmdinfo_serial_number(struct net_buf **buf, u16_t len)
 	char value[MDM_SN_RESPONSE_LENGTH];
 	size_t out_len;
 	int sn_len;
-	int len_no_null = MDM_SN_LENGTH - 1;
 	char *valStart;
 
 	/* make sure SN# data is received.
@@ -1632,11 +1630,11 @@ static bool on_cmd_atcmdinfo_serial_number(struct net_buf **buf, u16_t len)
 	valStart += 2;
 
 	sn_len = len - (valStart - value);
-	if (sn_len < len_no_null) {
+	if (sn_len < MDM_HL7800_SERIAL_NUMBER_STRLEN) {
 		LOG_WRN("sn too short (len:%d)", sn_len);
-	} else if (sn_len > len_no_null) {
+	} else if (sn_len > MDM_HL7800_SERIAL_NUMBER_STRLEN) {
 		LOG_WRN("sn too long (len:%d)", sn_len);
-		sn_len = MDM_SN_LENGTH;
+		sn_len = MDM_HL7800_SERIAL_NUMBER_STRLEN;
 	}
 
 	strncpy(ictx.mdm_sn, valStart, sn_len);
