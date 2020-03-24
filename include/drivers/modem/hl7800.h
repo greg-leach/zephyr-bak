@@ -27,6 +27,9 @@ extern "C" {
 #define MDM_HL7800_ICCID_SIZE 21
 #define MDM_HL7800_ICCID_STRLEN (MDM_HL7800_ICCID_SIZE - 1)
 
+#define MDM_HL7800_SERIAL_NUMBER_SIZE 15
+#define MDM_HL7800_SERIAL_NUMBER_STRLEN (MDM_HL7800_SERIAL_NUMBER_SIZE - 1)
+
 #define MDM_HL7800_APN_MAX_SIZE 64
 #define MDM_HL7800_APN_USERNAME_MAX_SIZE 65
 #define MDM_HL7800_APN_PASSWORD_MAX_SIZE 65
@@ -98,28 +101,28 @@ struct mdm_hl7800_compound_event {
 
 /**
  * @brief Power off the HL7800
- * 
+ *
  * @return s32_t 0 for success
  */
 s32_t mdm_hl7800_power_off(void);
 
 /**
  * @brief Reset the HL7800
- * 
+ *
  * @return s32_t 0 for success
  */
 s32_t mdm_hl7800_reset(void);
 
 /**
  * @brief Control the wake signals to the HL7800
- * 
+ *
  * @param awake True to keep the HL7800 awake, False to allow sleep
  */
 void mdm_hl7800_wakeup(bool awake);
 
 /**
  * @brief Send an AT command to the HL7800
- * 
+ *
  * @param data AT command string
  * @return s32_t 0 for success
  */
@@ -127,7 +130,7 @@ s32_t mdm_hl7800_send_at_cmd(const u8_t *data);
 
 /**
  * @brief Get the signal quality of the HL7800
- * 
+ *
  * @param rsrp Reference Signals Received Power (dBm)
  *             Range = -140 dBm to -44 dBm
  * @param sinr Signal to Interference plus Noise Ratio (dBm)
@@ -137,19 +140,19 @@ void mdm_hl7800_get_signal_quality(int *rsrp, int *sinr);
 
 /**
  * @brief Get the SIM card ICCID
- * 
+ *
  */
 char *mdm_hl7800_get_iccid(void);
 
 /**
  * @brief Get the HL7800 serial number
- * 
+ *
  */
 char *mdm_hl7800_get_sn(void);
 
 /**
  * @brief Update the Access Point Name in the modem.
- * 
+ *
  * @retval 0 on success, negative on failure.
  */
 s32_t mdm_hl7800_update_apn(char *access_point_name);
@@ -168,7 +171,7 @@ bool mdm_hl7800_valid_rat(u8_t value);
 
 /**
  * @brief Register a function that is called when a modem event occurs.
- * 
+ *
  * @param MDM_HL7800_event The type of event
  * @param event_data Pointer to event specific data structure
  *  HL7800_EVENT_NETWORK_STATE_CHANGE - compound event
@@ -182,18 +185,18 @@ void mdm_hl7800_register_event_callback(
 
 /**
  * @brief Force modem module to generate status events.
- * 
- * @note This can be used to get the current state when a module initializes 
+ *
+ * @note This can be used to get the current state when a module initializes
  * later than the modem.
  */
 void mdm_hl7800_generate_status_events(void);
 
 /**
  * @brief Get the local time from the modem's real time clock.
- * 
+ *
  * @param tm time structure
  * @param offset The amount the local time is offset from GMT/UTC in seconds.
- * 
+ *
  * @param 0 if successful
  */
 s32_t mdm_hl7800_get_local_time(struct tm *tm, s32_t *offset);
