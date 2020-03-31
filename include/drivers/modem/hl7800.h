@@ -15,7 +15,9 @@
 extern "C" {
 #endif
 
+#ifdef CONFIG_NEWLIB_LIBC
 #include <time.h>
+#endif
 
 /* The size includes the NUL character, the strlen doesn't */
 #define MDM_HL7800_REVISION_MAX_SIZE 29
@@ -191,6 +193,7 @@ void mdm_hl7800_register_event_callback(
  */
 void mdm_hl7800_generate_status_events(void);
 
+#ifdef CONFIG_NEWLIB_LIBC
 /**
  * @brief Get the local time from the modem's real time clock.
  *
@@ -200,6 +203,7 @@ void mdm_hl7800_generate_status_events(void);
  * @param 0 if successful
  */
 s32_t mdm_hl7800_get_local_time(struct tm *tm, s32_t *offset);
+#endif
 
 #ifdef __cplusplus
 }
