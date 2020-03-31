@@ -474,8 +474,10 @@ struct hl7800_iface_ctx {
 	enum mdm_hl7800_network_state network_state;
 	enum net_operator_status operator_status;
 	void (*event_callback)(enum mdm_hl7800_event event, void *event_data);
+#ifdef CONFIG_NEWLIB_LIBC
 	struct tm local_time;
 	s32_t local_time_offset;
+#endif
 	bool local_time_valid;
 };
 
@@ -501,8 +503,11 @@ static int modem_boot_handler(char *reason);
 static void mdm_vgpio_work_cb(struct k_work *item);
 static void mdm_reset_work_callback(struct k_work *item);
 static bool is_network_ready(void);
+
+#ifdef CONFIG_NEWLIB_LIBC
 static bool convert_time_string_to_struct(struct tm *tm, s32_t *offset,
 					  char *time_string);
+#endif
 
 #ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
 static bool is_cmd_ready()
@@ -944,6 +949,7 @@ error:
 	return ret;
 }
 
+#ifdef CONFIG_NEWLIB_LIBC
 s32_t mdm_hl7800_get_local_time(struct tm *tm, s32_t *offset)
 {
 	int ret;
@@ -965,6 +971,7 @@ s32_t mdm_hl7800_get_local_time(struct tm *tm, s32_t *offset)
 	hl7800_unlock();
 	return ret;
 }
+#endif
 
 void mdm_hl7800_generate_status_events(void)
 {
@@ -2103,6 +2110,7 @@ static bool on_cmd_network_report_query(struct net_buf **buf, u16_t len)
 	return true;
 }
 
+#ifdef CONFIG_NEWLIB_LIBC
 /* Handler: +CCLK: "yy/MM/dd,hh:mm:ss±zz" */
 static bool on_cmd_rtc_query(struct net_buf **buf, u16_t len)
 {
@@ -2151,6 +2159,7 @@ static bool valid_time_string(const char *time_string)
 	}
 	return false;
 }
+#endif
 
 int get_next_time_string_digit(int *failure_cnt, char **pp, int min, int max)
 {
@@ -2170,6 +2179,7 @@ int get_next_time_string_digit(int *failure_cnt, char **pp, int min, int max)
 	}
 }
 
+#ifdef CONFIG_NEWLIB_LIBC
 static bool convert_time_string_to_struct(struct tm *tm, s32_t *offset,
 					  char *time_string)
 {
@@ -2197,6 +2207,7 @@ static bool convert_time_string_to_struct(struct tm *tm, s32_t *offset,
 	}
 	return (fc == 0);
 }
+#endif
 
 /* Handler: +CEREG: <stat>[,[<lac>],[<ci>],[<AcT>]
 *  [,[<cause_type>],[<reject_cause>] [,[<Active-Time>],[<Periodic-TAU>]]]] */
@@ -2903,7 +2914,9 @@ static void hl7800_rx(void)
 		CMD_HANDLER("+WPPP: 1,1,", atcmdinfo_pdp_authentication_cfg),
 		CMD_HANDLER("+CGDCONT: 1", atcmdinfo_pdp_context),
 		CMD_HANDLER("AT+CEREG?", network_report_query),
+#ifdef CONFIG_NEWLIB_LIBC
 		CMD_HANDLER("+CCLK: ", rtc_query),
+#endif
 
 		/* UNSOLICITED modem information */
 		/* mobile startup report */
