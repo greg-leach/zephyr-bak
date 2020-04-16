@@ -21,6 +21,7 @@ LOG_MODULE_REGISTER(LOG_DOMAIN);
 #include <init.h>
 #include <stdlib.h>
 #include <power.h>
+#include <uart.h>
 
 #include <net/net_if.h>
 #include <net/net_context.h>
@@ -3078,99 +3079,16 @@ static void hl7800_rx(void)
 	}
 }
 
-static void modem_disconnect_uart_tx(void)
-{
-	int ret = gpio_pin_configure(ictx.gpio_port_dev[MDM_UART_TX],
-				     pinconfig[MDM_UART_TX].pin,
-				     pinconfig[MDM_UART_TX].sleep_config);
-	if (ret) {
-		LOG_ERR("Error disconnecting UART TX (%d)", ret);
-	}
-}
-
-static void modem_connect_uart_tx(void)
-{
-	int ret = gpio_pin_configure(ictx.gpio_port_dev[MDM_UART_TX],
-				     pinconfig[MDM_UART_TX].pin,
-				     pinconfig[MDM_UART_TX].config);
-	if (ret) {
-		LOG_ERR("Error connecting UART TX (%d)", ret);
-	}
-}
-
-static void modem_disconnect_uart_rts(void)
-{
-	int ret = gpio_pin_configure(ictx.gpio_port_dev[MDM_UART_RTS],
-				     pinconfig[MDM_UART_RTS].pin,
-				     pinconfig[MDM_UART_RTS].sleep_config);
-	if (ret) {
-		LOG_ERR("Error disconnecting UART RTS (%d)", ret);
-	}
-}
-
-static void modem_connect_uart_rts(void)
-{
-	int ret = gpio_pin_configure(ictx.gpio_port_dev[MDM_UART_RTS],
-				     pinconfig[MDM_UART_RTS].pin,
-				     pinconfig[MDM_UART_RTS].config);
-	if (ret) {
-		LOG_ERR("Error connecting UART RTS (%d)", ret);
-	}
-}
-
-static void modem_disconnect_uart_rx(void)
-{
-	int rc = gpio_pin_configure(ictx.gpio_port_dev[MDM_UART_RX],
-				    pinconfig[MDM_UART_RX].pin,
-				    pinconfig[MDM_UART_RX].sleep_config);
-	if (rc) {
-		LOG_ERR("Error disconnecting UART RX (%d)", rc);
-	}
-}
-
-static void modem_connect_uart_rx(void)
-{
-	int rc = gpio_pin_configure(ictx.gpio_port_dev[MDM_UART_RX],
-				    pinconfig[MDM_UART_RX].pin,
-				    pinconfig[MDM_UART_RX].config);
-	if (rc) {
-		LOG_ERR("Error connecting UART RX (%d)", rc);
-	}
-}
-
-static void modem_disconnect_uart_cts(void)
-{
-	int rc = gpio_pin_configure(ictx.gpio_port_dev[MDM_UART_CTS],
-				    pinconfig[MDM_UART_CTS].pin,
-				    pinconfig[MDM_UART_CTS].sleep_config);
-	if (rc) {
-		LOG_ERR("Error disconnecting UART CTS (%d)", rc);
-	}
-}
-
-static void modem_connect_uart_cts(void)
-{
-	int rc = gpio_pin_configure(ictx.gpio_port_dev[MDM_UART_CTS],
-				    pinconfig[MDM_UART_CTS].pin,
-				    pinconfig[MDM_UART_CTS].config);
-	if (rc) {
-		LOG_ERR("Error connecting UART CTS (%d)", rc);
-	}
-}
-
 static void shutdown_uart(void)
 {
 #ifdef CONFIG_DEVICE_POWER_MANAGEMENT
 	Z_LOG(HL7800_IO_LOG_LEVEL, "Power OFF the UART");
+	uart_irq_rx_disable(ictx.mdm_ctx.uart_dev);
 	int rc = device_set_power_state(ictx.mdm_ctx.uart_dev,
 					DEVICE_PM_OFF_STATE, NULL, NULL);
 	if (rc) {
 		LOG_ERR("Error disabling UART peripheral (%d)", rc);
 	}
-	modem_disconnect_uart_tx();
-	modem_disconnect_uart_rts();
-	modem_disconnect_uart_rx();
-	modem_disconnect_uart_cts();
 #endif
 }
 
@@ -3178,15 +3096,12 @@ static void power_on_uart(void)
 {
 #ifdef CONFIG_DEVICE_POWER_MANAGEMENT
 	Z_LOG(HL7800_IO_LOG_LEVEL, "Power ON the UART");
-	modem_connect_uart_tx();
-	modem_connect_uart_rts();
-	modem_connect_uart_rx();
-	modem_connect_uart_cts();
 	int rc = device_set_power_state(ictx.mdm_ctx.uart_dev,
 					DEVICE_PM_ACTIVE_STATE, NULL, NULL);
 	if (rc) {
 		LOG_ERR("Error enabling UART peripheral (%d)", rc);
 	}
+	uart_irq_rx_enable(ictx.mdm_ctx.uart_dev);
 #endif
 }
 
