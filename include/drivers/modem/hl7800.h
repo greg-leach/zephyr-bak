@@ -54,6 +54,9 @@ struct mdm_hl7800_apn {
 	char password[MDM_HL7800_APN_PASSWORD_MAX_SIZE];
 };
 
+#define MDM_HL7800_LTE_BAND_STR_SIZE 21
+#define MDM_HL7800_LTE_BAND_STRLEN (MDM_HL7800_LTE_BAND_STR_SIZE - 1)
+
 enum mdm_hl7800_radio_mode { MDM_RAT_CAT_M1 = 0, MDM_RAT_CAT_NB1 };
 
 enum mdm_hl7800_event {
@@ -65,6 +68,8 @@ enum mdm_hl7800_event {
 	HL7800_EVENT_STARTUP_STATE_CHANGE,
 	HL7800_EVENT_SLEEP_STATE_CHANGE,
 	HL7800_EVENT_RAT,
+	HL7800_EVENT_BANDS,
+	HL7800_EVENT_ACTIVE_BANDS,
 };
 
 enum mdm_hl7800_startup_state {
@@ -176,11 +181,13 @@ bool mdm_hl7800_valid_rat(u8_t value);
  *
  * @param MDM_HL7800_event The type of event
  * @param event_data Pointer to event specific data structure
- *  HL7800_EVENT_NETWORK_STATE_CHANGE - compound event
- *  HL7800_EVENT_APN_UPDATE - struct mdm_hl7800_apn
- *  HL7800_EVENT_RSSI - int
- *  HL7800_EVENT_SINR - int
- *  HL7800_EVENT_STARTUP_STATE_CHANGE - compound event
+ * HL7800_EVENT_NETWORK_STATE_CHANGE - compound event
+ * HL7800_EVENT_APN_UPDATE - struct mdm_hl7800_apn
+ * HL7800_EVENT_RSSI - int
+ * HL7800_EVENT_SINR - int
+ * HL7800_EVENT_STARTUP_STATE_CHANGE - compound event
+ * HL7800_EVENT_RAT - int
+ * HL7800_EVENT_BANDS - string
  */
 void mdm_hl7800_register_event_callback(
 	void (*callback)(enum mdm_hl7800_event event, void *event_data));

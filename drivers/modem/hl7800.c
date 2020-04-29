@@ -461,6 +461,8 @@ struct hl7800_iface_ctx {
 	char mdm_iccid[MDM_HL7800_ICCID_SIZE];
 	u8_t mdm_startup_state;
 	enum mdm_hl7800_radio_mode mdm_rat;
+	char mdm_active_bands_string[MDM_HL7800_LTE_BAND_STR_SIZE];
+	char mdm_bands_string[MDM_HL7800_LTE_BAND_STR_SIZE];
 	u16_t mdm_bands_top;
 	u32_t mdm_bands_middle;
 	u32_t mdm_bands_bottom;
@@ -547,7 +549,7 @@ static void check_hl7800_awake()
 		*/
 		ictx.wait_for_KSUP = true;
 		ictx.wait_for_KSUP_tries = 0;
-		
+
 		set_sleep_state(HL7800_SLEEP_STATE_ASLEEP);
 		k_sem_reset(&ictx.mdm_awake);
 	}
@@ -933,7 +935,7 @@ s32_t mdm_hl7800_update_rat(enum mdm_hl7800_radio_mode value)
 	int ret = -EINVAL;
 
 	if (value == ictx.mdm_rat) {
-		// The set command will fail (in the modem) if the RAT isn't different.
+		/* The set command will fail (in the modem) if the RAT isn't different. */
 		return 0;
 	} else if (!mdm_hl7800_valid_rat(value)) {
 		return ret;
@@ -945,7 +947,7 @@ s32_t mdm_hl7800_update_rat(enum mdm_hl7800_radio_mode value)
 
 	if (value == MDM_RAT_CAT_M1) {
 		SEND_AT_CMD_ONCE_EXPECT_OK("AT+KSRAT=0");
-	} else { // MDM_RAT_CAT_NB1
+	} else { /* MDM_RAT_CAT_NB1 */
 		SEND_AT_CMD_ONCE_EXPECT_OK("AT+KSRAT=1");
 	}
 
@@ -993,6 +995,8 @@ void mdm_hl7800_generate_status_events(void)
 	event_handler(HL7800_EVENT_SINR, &ictx.mdm_sinr);
 	event_handler(HL7800_EVENT_APN_UPDATE, &ictx.mdm_apn);
 	event_handler(HL7800_EVENT_RAT, &ictx.mdm_rat);
+	event_handler(HL7800_EVENT_BANDS, ictx.mdm_bands_string);
+	event_handler(HL7800_EVENT_ACTIVE_BANDS, ictx.mdm_active_bands_string);
 	hl7800_unlock();
 }
 
@@ -1686,12 +1690,15 @@ static bool on_cmd_radio_band_configuration(struct net_buf **buf, u16_t len)
 	value[out_len] = 0;
 
 	if (value[0] != (ictx.mdm_rat == MDM_RAT_CAT_M1 ? '0' : '1')) {
-		//Invalid RAT
+		/* Invalid RAT */
 		return true;
 	} else if (strlen(value) < sizeof("#,###################")) {
-		//String size too short
+		/* String size too short */
 		return true;
 	}
+
+	memcpy(ictx.mdm_bands_string, &value[MDM_TOP_BAND_START_POSITION],
+	       MDM_HL7800_LTE_BAND_STRLEN);
 
 	memcpy(nTmp, &value[MDM_TOP_BAND_START_POSITION], MDM_TOP_BAND_SIZE);
 	nTmp[MDM_TOP_BAND_SIZE] = 0;
@@ -1714,9 +1721,30 @@ static bool on_cmd_radio_band_configuration(struct net_buf **buf, u16_t len)
 	return true;
 }
 
+/* Handler: +KBND: #,####################### */
+static bool on_cmd_radio_active_bands(struct net_buf **buf, u16_t len)
+{
+	size_t out_len;
+	char value[len + 1];
+
+	out_len = net_buf_linearize(value, sizeof(value) - 1, *buf, 0, len);
+	value[out_len] = 0;
+
+	if (strlen(value) < sizeof("#,###################")) {
+		/* String size too short */
+		return true;
+	}
+
+	memcpy(ictx.mdm_active_bands_string,
+	       &value[MDM_TOP_BAND_START_POSITION], MDM_HL7800_LTE_BAND_STRLEN);
+	event_handler(HL7800_EVENT_ACTIVE_BANDS, ictx.mdm_active_bands_string);
+
+	return true;
+}
+
 static char *get_startup_state_string(enum mdm_hl7800_startup_state state)
 {
-	// clang-format off
+	/* clang-format off */
 	switch (state) {
 		PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800_STARTUP_STATE, READY);
 		PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800_STARTUP_STATE, WAITING_FOR_ACCESS_CODE);
@@ -1728,7 +1756,7 @@ static char *get_startup_state_string(enum mdm_hl7800_startup_state state)
 	default:
 		return "UNKNOWN";
 	}
-	// clang-format on
+	/* clang-format on */
 }
 
 static void set_startup_state(enum mdm_hl7800_startup_state state)
@@ -1748,7 +1776,7 @@ static void generate_startup_state_event(void)
 
 static char *get_sleep_state_string(enum mdm_hl7800_sleep_state state)
 {
-	// clang-format off
+	/* clang-format off */
 	switch (state) {
 		PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800_SLEEP_STATE, UNINITIALIZED);
 		PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800_SLEEP_STATE, ASLEEP);
@@ -1756,7 +1784,7 @@ static char *get_sleep_state_string(enum mdm_hl7800_sleep_state state)
 	default:
 		return "UNKNOWN";
 	}
-	// clang-format on
+	/* clang-format on */
 }
 
 static void set_sleep_state(enum mdm_hl7800_sleep_state state)
@@ -1798,15 +1826,15 @@ static bool on_cmd_startup_report(struct net_buf **buf, u16_t len)
 static bool profile_handler(struct net_buf **buf, u16_t len,
 			    bool active_profile)
 {
-	// Prepare net buffer for this parser.
+	/* Prepare net buffer for this parser. */
 	net_buf_remove(buf, len);
 	net_buf_skipcrlf(buf);
 
 	u32_t size = wait_for_modem_data(buf, net_buf_frags_len(*buf),
 					 sizeof(PROFILE_LINE_1));
-	net_buf_skipcrlf(buf); // remove any \r\n that are in the front
+	net_buf_skipcrlf(buf); /* remove any \r\n that are in the front */
 
-	// Parse configuration data to determine if echo is on/off.
+	/* Parse configuration data to determine if echo is on/off. */
 	int echo_state = -1;
 	struct net_buf *frag = NULL;
 	u16_t line_length = net_buf_findcrlf(*buf, &frag);
@@ -1818,7 +1846,7 @@ static bool profile_handler(struct net_buf **buf, u16_t len,
 		Z_LOG(LOG_LEVEL_DBG, "length: %u: %s", line_length,
 		      log_strdup(line));
 
-		// Echo on off is the first thing on the line: E0, E1
+		/* Echo on off is the first thing on the line: E0, E1 */
 		if (output_length >= SIZE_WITHOUT_NUL("E?")) {
 			echo_state = (line[1] == '1') ? 1 : 0;
 		}
@@ -1831,8 +1859,8 @@ static bool profile_handler(struct net_buf **buf, u16_t len,
 		ictx.mdm_echo_is_on = (echo_state != 0);
 	}
 
-	// Discard next line.  This waits for the longest possible response even
-	// though most registers won't have the value 0xFF.
+	/* Discard next line.  This waits for the longest possible response even
+	 * though most registers won't have the value 0xFF. */
 	size = wait_for_modem_data(buf, net_buf_frags_len(*buf),
 				   sizeof(PROFILE_LINE_2));
 	net_buf_skipcrlf(buf);
@@ -2051,13 +2079,10 @@ static void iface_status_work_cb(struct k_work *work)
 		hl7800_stop_rssi_work();
 	} else if (ictx.iface && net_if_is_up(ictx.iface)) {
 		hl7800_start_rssi_work();
-
 		/* get IP address info */
-		ret = send_at_cmd(NULL, "AT+CGCONTRDP=1", MDM_CMD_SEND_TIMEOUT,
-				  0, false);
-		if (ret < 0) {
-			LOG_ERR("AT+CGCONTRDP ret:%d", ret);
-		}
+		SEND_AT_CMD_IGNORE_ERROR("AT+CGCONTRDP=1");
+		/* get active bands */
+		SEND_AT_CMD_IGNORE_ERROR("AT+KBND?");
 	}
 	LOG_DBG("Network state updated");
 	allow_sleep(true);
@@ -2067,20 +2092,18 @@ done:
 
 static char *get_network_state_string(enum mdm_hl7800_network_state state)
 {
-	// clang-format off
-    switch (state) {
-        PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800, NOT_REGISTERED);
-        PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800, HOME_NETWORK);
-        PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800, SEARCHING);
-        PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800, REGISTRATION_DENIED);
-        PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800, OUT_OF_COVERAGE);
-        PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800, ROAMING);
-        PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800, EMERGENCY);
-        PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800, UNABLE_TO_CONFIGURE);
-    default:
-        return "UNKNOWN";
-    }
-	// clang-format on
+	switch (state) {
+		PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800, NOT_REGISTERED);
+		PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800, HOME_NETWORK);
+		PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800, SEARCHING);
+		PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800, REGISTRATION_DENIED);
+		PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800, OUT_OF_COVERAGE);
+		PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800, ROAMING);
+		PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800, EMERGENCY);
+		PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800, UNABLE_TO_CONFIGURE);
+	default:
+		return "UNKNOWN";
+	}
 }
 
 static void set_network_state(enum mdm_hl7800_network_state state)
@@ -2925,6 +2948,7 @@ static void hl7800_rx(void)
 		CMD_HANDLER("+COPS: ", atcmdinfo_operator_status),
 		CMD_HANDLER("+KSRAT: ", radio_tech_status),
 		CMD_HANDLER("+KBNDCFG: ", radio_band_configuration),
+		CMD_HANDLER("+KBND: ", radio_active_bands),
 		CMD_HANDLER("+CCID: ", atcmdinfo_iccid),
 		CMD_HANDLER("ACTIVE PROFILE:", atcmdinfo_active_profile),
 		CMD_HANDLER("STORED PROFILE 0:", atcmdinfo_stored_profile0),
@@ -3311,6 +3335,8 @@ reboot:
 	/* Query current Radio Access Technology (RAT) */
 	SEND_AT_CMD_EXPECT_OK("AT+KSRAT?");
 
+	SEND_AT_CMD_EXPECT_OK("AT+KBNDCFG?");
+
 	/* Configure LTE bands */
 #if CONFIG_MODEM_HL7800_CONFIGURE_BANDS
 	u16_t bands_top = 0;
@@ -3376,8 +3402,6 @@ reboot:
 #if CONFIG_MODEM_HL7800_BAND_66
 	bands_top |= 1 << 1;
 #endif
-
-	SEND_AT_CMD_EXPECT_OK("AT+KBNDCFG?");
 
 	/* Check if bands are configured correctly */
 	if (ictx.mdm_bands_top != bands_top ||
