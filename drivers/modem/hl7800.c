@@ -102,7 +102,7 @@ enum udp_notif {
 	HL7800_UDP_ALL_USED = 11
 };
 
-enum socket_state { SOCK_IDLE, SOCK_RX, SOCK_TX };
+enum socket_state { SOCK_IDLE, SOCK_RX, SOCK_TX, SOCK_SERVER_CLOSED };
 
 struct mdm_control_pinconfig {
 	char *dev_name;
@@ -2018,6 +2018,26 @@ static void hl7800_rssi_query_work(struct k_work *work)
 				       K_SECONDS(RSSI_TIMEOUT_SECS));
 }
 
+static void notify_all_tcp_sockets_closed(void)
+{
+	int i;
+	struct hl7800_socket *sock = NULL;
+
+	for (i = 0; i < MDM_MAX_SOCKETS; i++) {
+		sock = &ictx.sockets[i];
+		if ((sock->context != NULL) && (sock->type == SOCK_STREAM)) {
+			sock->state = SOCK_SERVER_CLOSED;
+			LOG_DBG("Sock %d closed", sock->socket_id);
+			/* signal RX callback with null packet */
+			if (sock->recv_cb) {
+				sock->recv_cb(sock->context, sock->recv_pkt,
+					      NULL, NULL, 0,
+					      sock->recv_user_data);
+			}
+		}
+	}
+}
+
 static void iface_status_work_cb(struct k_work *work)
 {
 	int ret;
@@ -2077,6 +2097,7 @@ static void iface_status_work_cb(struct k_work *work)
 
 	if (ictx.iface && !net_if_is_up(ictx.iface)) {
 		hl7800_stop_rssi_work();
+		notify_all_tcp_sockets_closed();
 	} else if (ictx.iface && net_if_is_up(ictx.iface)) {
 		hl7800_start_rssi_work();
 		/* get IP address info */
@@ -2439,6 +2460,7 @@ static void sock_notif_cb_work(struct k_work *work)
 					       MDM_SOCK_NOTIF_DELAY);
 	} else {
 		LOG_DBG("Sock %d trigger NULL packet", sock->socket_id);
+		sock->state = SOCK_SERVER_CLOSED;
 		k_work_submit_to_queue(&hl7800_workq, &sock->recv_cb_work);
 		sock->error = false;
 	}
@@ -3989,9 +4011,12 @@ static int offload_put(struct net_context *context)
 	}
 
 	wakeup_hl7800();
-	ret = send_at_cmd(sock, cmd1, MDM_CMD_SEND_TIMEOUT, 0, false);
-	if (ret < 0) {
-		LOG_ERR("AT+K**PCLOSE ret:%d", ret);
+
+	if (sock->state != SOCK_SERVER_CLOSED) {
+		ret = send_at_cmd(sock, cmd1, MDM_CMD_SEND_TIMEOUT, 0, false);
+		if (ret < 0) {
+			LOG_ERR("AT+K**PCLOSE ret:%d", ret);
+		}
 	}
 
 	if (sock->type == SOCK_STREAM) {
@@ -4010,10 +4035,13 @@ cleanup:
 	net_context_unref(context);
 	if (sock->type == SOCK_STREAM) {
 		/* TCP contexts are referenced twice,
-		*  once for the app and once for the stack.  Since TCP stack is not
-		*  used for offload, unref a second time. */
+		 *  once for the app and once for the stack.
+		 *  Since TCP stack is not used for offload,
+		 *  unref a second time.
+		 */
 		net_context_unref(context);
 	}
+
 	hl7800_unlock();
 
 	return 0;
