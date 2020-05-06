@@ -3155,14 +3155,13 @@ static void power_on_uart(void)
 static void prepare_io_for_reset(void)
 {
 	Z_LOG(HL7800_IO_LOG_LEVEL, "Preparing IO for reset/sleep");
-
-	ictx.wait_for_KSUP = true;
-	ictx.wait_for_KSUP_tries = 0;
 	shutdown_uart();
 	modem_assert_wake(false);
 	modem_assert_pwr_on(false);
 	modem_assert_fast_shutd(false);
 	modem_assert_uart_dtr(false);
+	ictx.wait_for_KSUP = true;
+	ictx.wait_for_KSUP_tries = 0;
 }
 
 static void mdm_vgpio_work_cb(struct k_work *item)
@@ -3224,9 +3223,8 @@ void mdm_gpio6_callback_isr(struct device *port, struct gpio_callback *cb,
 {
 	gpio_pin_read(ictx.gpio_port_dev[MDM_GPIO6], pinconfig[MDM_GPIO6].pin,
 		      &ictx.gpio6_state);
-	check_hl7800_awake();
-
 	Z_LOG(HL7800_IO_LOG_LEVEL, "MDM_GPIO6:%d", ictx.gpio6_state);
+	check_hl7800_awake();
 }
 
 void mdm_uart_cts_callback(struct device *port, struct gpio_callback *cb,
@@ -3234,21 +3232,22 @@ void mdm_uart_cts_callback(struct device *port, struct gpio_callback *cb,
 {
 	gpio_pin_read(ictx.gpio_port_dev[MDM_UART_CTS],
 		      pinconfig[MDM_UART_CTS].pin, &ictx.cts_state);
-	/* CTS toggles A LOT, comment out the debug print unless we really need it. */
-	/* 	Z_LOG(HL7800_IO_LOG_LEVEL, "MDM_UART_CTS:%d", val); */
-
+	/* CTS toggles A LOT,
+	 * comment out the debug print unless we really need it.
+	 */
+	/* Z_LOG(HL7800_IO_LOG_LEVEL, "MDM_UART_CTS:%d", val); */
 	check_hl7800_awake();
 }
 
 static void modem_reset(void)
 {
-	LOG_INF("Modem Reset");
-
 	prepare_io_for_reset();
 
-	/* Hard reset the modem (>20 milliseconds required) */
+	LOG_INF("Modem Reset");
+	/* Hard reset the modem */
 	gpio_pin_write(ictx.gpio_port_dev[MDM_RESET], pinconfig[MDM_RESET].pin,
 		       MDM_RESET_ASSERTED);
+	/* >20 milliseconds required for reset low */
 	k_sleep(MDM_RESET_LOW_TIME);
 
 	ictx.mdm_startup_reporting_on = false;
@@ -3261,11 +3260,11 @@ static void modem_reset(void)
 
 static void modem_run(void)
 {
+	LOG_INF("Modem Run");
 	gpio_pin_write(ictx.gpio_port_dev[MDM_RESET], pinconfig[MDM_RESET].pin,
 		       MDM_RESET_NOT_ASSERTED);
-	allow_sleep(false);
 	k_sleep(MDM_RESET_HIGH_TIME);
-	LOG_INF("Modem Run");
+	allow_sleep(false);
 }
 
 static int modem_boot_handler(char *reason)
@@ -4079,6 +4078,8 @@ static int hl7800_init(struct device *dev)
 
 	ARG_UNUSED(dev);
 
+	LOG_DBG("HL7800 Init");
+
 	/* check for valid pinconfig */
 	__ASSERT(ARRAY_SIZE(pinconfig) == MAX_MDM_CONTROL_PINS,
 		 "Incorrect modem pinconfig!");
@@ -4135,6 +4136,17 @@ static int hl7800_init(struct device *dev)
 			return ret;
 		}
 	}
+
+	modem_assert_wake(false);
+	modem_assert_uart_dtr(false);
+	modem_assert_pwr_on(false);
+	modem_assert_fast_shutd(false);
+
+	/* Allow modem to run so we are in a known state.
+	 * This allows HL7800 VGPIO to be high, which is good because the UART
+	 * IO are already configured.
+	 */
+	modem_run();
 
 	/* setup input pin callbacks */
 	/* VGPIO */
