@@ -39,6 +39,7 @@ static bool errata_103(void);
 static bool errata_115(void);
 static bool errata_120(void);
 static bool errata_136(void);
+static bool errata_197(void);
 
 
 #if defined ( __CC_ARM )
@@ -137,7 +138,21 @@ void SystemInit(void)
             NRF_POWER->RESETREAS =  ~POWER_RESETREAS_RESETPIN_Msk;
         }
     }
-    
+
+    /* Workaround for Errata 197 "DCDC of REG0 not functional"
+     * Details found here:
+     * https://infocenter.nordicsemi.com/topic/struct_nrf52/struct/nrf52840_errata.html
+     */
+    if (errata_197()){
+        if (NRF_POWER->DCDCEN0 == 0x1ul)
+        {
+            /* Disable REG0 */
+            NRF_POWER->DCDCEN0 = 0;
+            /* prevent REG0 stage to go to ULP mode to prevent random resets. */
+            *(volatile uint32_t *)0x40000638 = 0x01ul;
+        }
+    }
+
     /* Enable the FPU if the compiler used floating point unit instructions. __FPU_USED is a MACRO defined by the
      * compiler. Since the FPU consumes energy, remember to disable FPU use in the compiler if floating point unit
      * operations are not used in your code. */
@@ -295,6 +310,27 @@ static bool errata_136(void)
 
     /* Apply by default for unknown devices until errata is confirmed fixed. */
     return true;
+}
+
+static bool errata_197(void)
+{
+    uint32_t var1 = *(uint32_t *)0x10000130ul;
+    uint32_t var2 = *(uint32_t *)0x10000134ul;
+    if (var1 == 0x08)
+    {
+        switch(var2)
+        {
+            case 0x00ul:
+                return false;
+            case 0x01ul:
+                return false;
+            case 0x02ul:
+                return true;
+            case 0x03ul:
+                return false;
+        }
+    }
+    return false;
 }
 
 /*lint --flb "Leave library region" */
