@@ -21,4 +21,9 @@ properties:
       type: compound
       category: required
       generation: define, use-prop-name
+
+    temp-ref:
+      type: compound
+      category: required
+      generation: define, use-prop-name
 ...

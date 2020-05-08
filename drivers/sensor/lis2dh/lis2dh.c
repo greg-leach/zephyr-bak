@@ -11,6 +11,8 @@
 #include <logging/log.h>
 
 #define LOG_LEVEL CONFIG_SENSOR_LOG_LEVEL
+#define INVALID_TEMPERATURE -32768
+
 LOG_MODULE_REGISTER(lis2dh);
 #include "lis2dh.h"
 
@@ -87,14 +89,27 @@ static void lis2dh_convert(s16_t raw_val, u16_t scale,
 		val->val2 += 1000000;
 	}
 }
-
-static int lis2dh_channel_get(struct device *dev,
-			      enum sensor_channel chan,
-			      struct sensor_value *val)
+static int lis2dh_channel_get_temp(struct device *dev, struct sensor_value *val)
 {
 	struct lis2dh_data *lis2dh = dev->driver_data;
-	int ofs_start;
-	int ofs_end;
+	int ret = -EBADMSG;
+
+	if (lis2dh->temp_sample != INVALID_TEMPERATURE) {
+		val->val1 = lis2dh->temp_sample;
+		val->val2 = 0;
+		ret = 0;
+	}
+
+	return ret;
+}
+
+static int lis2dh_channel_get_xyz(struct device *dev, enum sensor_channel chan,
+			    struct sensor_value *val)
+{
+	struct lis2dh_data *lis2dh = dev->driver_data;
+	int ofs_start = 0;
+	int ofs_end = -1;
+	int ret = 0;
 	int i;
 
 	switch (chan) {
@@ -112,16 +127,73 @@ static int lis2dh_channel_get(struct device *dev,
 		ofs_end = 2;
 		break;
 	default:
-		return -ENOTSUP;
+		ret = -ENOTSUP;
+		break;
 	}
 	for (i = ofs_start; i <= ofs_end; i++, val++) {
 		lis2dh_convert(lis2dh->sample.xyz[i], lis2dh->scale, val);
 	}
 
-	return 0;
+	return ret;
 }
 
-static int lis2dh_sample_fetch(struct device *dev, enum sensor_channel chan)
+static int lis2dh_channel_get(struct device *dev, enum sensor_channel chan,
+			    struct sensor_value *val)
+{
+	int ret = -ENOTSUP;
+	struct lis2dh_data *lis2dh = dev->driver_data;
+
+	switch (chan) {
+	case SENSOR_CHAN_ACCEL_X:
+	case SENSOR_CHAN_ACCEL_Y:
+	case SENSOR_CHAN_ACCEL_Z:
+	case SENSOR_CHAN_ACCEL_XYZ:
+		ret = lis2dh_channel_get_xyz(dev, chan, val);
+		break;
+	case SENSOR_CHAN_AMBIENT_TEMP:
+		if (lis2dh->has_temperature_sensor) {
+			ret = lis2dh_channel_get_temp(dev, val);
+		}
+		break;
+	default:
+		break;
+	}
+
+	return ret;
+}
+
+static int lis2dh_sample_fetch_temp(struct device *dev)
+{
+	int ret = 0;
+	struct lis2dh_data *lis2dh = dev->driver_data;
+	u8_t temp_raw[sizeof(u16_t)];
+
+	/*
+	 * the LIS3DH requires a 2 byte read for the temperature value
+	 *  even though only the _H register has valid data. the _L and _H
+	 *  registers are consecutive, so a burst read will work here.
+	 */
+	ret = lis2dh_burst_read(dev,
+			     LIS2DH_REG_ADC3_L,
+			     temp_raw, sizeof(temp_raw));
+	if (ret < 0) {
+		LOG_WRN("Failed to fetch raw temp sample");
+		ret = -EIO;
+		lis2dh->temp_sample = INVALID_TEMPERATURE;
+	}
+	else {
+		/*
+		 * LIS2DH_REG_ADC3_H contains a delta value for the
+		 *  temperature that must be added to the reference temperature set
+		 *  for your board to return an absolute temperature in celsius.
+		 */
+		lis2dh->temp_sample = DT_ST_LIS2DH_0_TEMP_REF + temp_raw[1];
+	}
+
+	return ret;
+}
+
+static int lis2dh_sample_fetch_xyz(struct device *dev)
 {
 	struct lis2dh_data *lis2dh = dev->driver_data;
 	size_t i;
@@ -160,6 +232,36 @@ static int lis2dh_sample_fetch(struct device *dev, enum sensor_channel chan)
 	}
 
 	return -ENODATA;
+}
+
+static int lis2dh_sample_fetch(struct device *dev, enum sensor_channel chan)
+{
+	int ret = -ENOTSUP;
+	struct lis2dh_data *lis2dh = dev->driver_data;
+
+	switch (chan) {
+	case SENSOR_CHAN_ACCEL_X:
+	case SENSOR_CHAN_ACCEL_Y:
+	case SENSOR_CHAN_ACCEL_Z:
+	case SENSOR_CHAN_ACCEL_XYZ:
+		ret = lis2dh_sample_fetch_xyz(dev);
+		break;
+	case SENSOR_CHAN_AMBIENT_TEMP:
+		if (lis2dh->has_temperature_sensor) {
+			ret = lis2dh_sample_fetch_temp(dev);
+		}
+		break;
+	case SENSOR_CHAN_ALL:
+		ret = lis2dh_sample_fetch_xyz(dev);
+		if (lis2dh->has_temperature_sensor) {
+			ret = lis2dh_sample_fetch_temp(dev);
+		}
+		break;
+	default:
+		break;
+	}
+
+	return ret;
 }
 
 #ifdef CONFIG_LIS2DH_ODR_RUNTIME
@@ -316,6 +418,8 @@ int lis2dh_init(struct device *dev)
 {
 	struct lis2dh_data *lis2dh = dev->driver_data;
 	int status;
+	u8_t reg_val = 0;
+	u8_t chip_id = 0;
 	u8_t raw[LIS2DH_DATA_OFS + 6];
 
 	status = lis2dh_bus_configure(dev);
@@ -358,6 +462,25 @@ int lis2dh_init(struct device *dev)
 	LOG_INF("bus=%s fs=%d, odr=0x%x lp_en=0x%x scale=%d",
 		    LIS2DH_BUS_DEV_NAME, 1 << (LIS2DH_FS_IDX + 1),
 		    LIS2DH_ODR_IDX, (u8_t)LIS2DH_LP_EN_BIT, lis2dh->scale);
+
+	/* check chip ID */
+	status = lis2dh_reg_read_byte(dev, LIS2DH_REG_WHO_AM_I, &chip_id);
+
+	/* if this is for a version with a temperature sensor built in...*/
+	if ((status >= 0) && (chip_id == LIS2DH_WHO_AM_I_LIS3DH)) {
+		/*
+		 * on the LIS3DH, ADC3 is used for reading the temperature values.
+		 *  Both ADC and Temperature measurements must be enabled, in
+		 *  addition to block data updates.
+		*/
+		status = lis2dh_reg_read_byte(dev, LIS2DH_REG_CTRL4, &reg_val);
+		status = lis2dh_reg_write_byte(dev, LIS2DH_REG_CTRL4, (reg_val | LIS2DH_CTRL4_BDU_BIT));
+		status = lis2dh_reg_write_byte(dev, LIS2DH_REG_TEMP_CFG_REG, LIS2DH_TEMP_CFG_EN_BITS);
+		lis2dh->has_temperature_sensor = true;
+	}
+	else {
+		lis2dh->has_temperature_sensor = false;
+	}
 
 	/* enable accel measurements and set power mode and data rate */
 	return lis2dh_reg_write_byte(dev, LIS2DH_REG_CTRL1,

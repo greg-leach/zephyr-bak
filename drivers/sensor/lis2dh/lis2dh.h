@@ -96,6 +96,7 @@
 #define LIS2DH_EN_DRDY1_INT1_SHIFT	4
 #define LIS2DH_EN_DRDY1_INT1		BIT(LIS2DH_EN_DRDY1_INT1_SHIFT)
 
+#define LIS2DH_CTRL4_BDU_BIT	BIT(7)
 #define LIS2DH_REG_CTRL4		0x23
 #define LIS2DH_FS_SHIFT			4
 #define LIS2DH_FS_MASK			(BIT_MASK(2) << LIS2DH_FS_SHIFT)
@@ -136,6 +137,15 @@
 #define LIS2DH_STATUS_Y_DRDY		BIT(1)
 #define LIS2DH_STATUS_X_DRDY		BIT(0)
 #define LIS2DH_STATUS_DRDY_MASK		BIT_MASK(4)
+
+#define LIS2DH_TEMP_EN_BIT		BIT(6)
+#define LIS2DH_ADC_EN_BIT		BIT(7)
+#define LIS2DH_TEMP_CFG_EN_BITS	(LIS2DH_TEMP_EN_BIT | LIS2DH_ADC_EN_BIT)
+#define LIS2DH_WHO_AM_I_LIS3DH	0x33
+#define LIS2DH_REG_ADC3_L		0x0C
+#define LIS2DH_REG_ADC3_H		0x0D
+#define LIS2DH_REG_WHO_AM_I		0x0F
+#define LIS2DH_REG_TEMP_CFG_REG	0x1F
 
 #define LIS2DH_REG_ACCEL_X_LSB		0x28
 #define LIS2DH_REG_ACCEL_Y_LSB		0x2A
@@ -202,6 +212,8 @@ struct lis2dh_data {
 	union lis2dh_sample sample;
 	/* current scaling factor, in micro m/s^2 / lsb */
 	u16_t scale;
+	s16_t temp_sample;
+	bool has_temperature_sensor;
 
 #ifdef CONFIG_LIS2DH_TRIGGER
 	struct device *gpio_int1;
