@@ -42,5 +42,14 @@ zephyr_library_sources_ifdef(CONFIG_LWM2M_IPSO_LIGHT_CONTROL
 zephyr_library_sources_ifdef(CONFIG_LWM2M_IPSO_TIMER
     ipso_timer.c
     )
+zephyr_library_sources_ifdef(CONFIG_LWM2M_IPSO_GENERIC_SENSOR
+    ipso_generic_sensor.c
+    )
+zephyr_library_sources_ifdef(CONFIG_LWM2M_IPSO_HUMIDITY_SENSOR
+    ipso_humidity_sensor.c
+    )
+zephyr_library_sources_ifdef(CONFIG_LWM2M_IPSO_PRESSURE_SENSOR
+    ipso_pressure_sensor.c
+    )
 
 zephyr_library_link_libraries_ifdef(CONFIG_MBEDTLS mbedTLS)

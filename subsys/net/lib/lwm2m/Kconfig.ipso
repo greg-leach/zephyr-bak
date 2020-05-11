@@ -59,4 +59,50 @@ config LWM2M_IPSO_TIMER_INSTANCE_COUNT
 	  This setting establishes the total count of IPSO Timer
 	  instances available to the LWM2M client.
 
+config LWM2M_IPSO_GENERIC_SENSOR
+	bool "IPSO Generic Sensor Support"
+
+config LWM2M_IPSO_GENERIC_SENSOR_INSTANCE_COUNT
+	int "Maximum # of IPSO Generic Sensor object instances"
+	default 1
+	depends on LWM2M_IPSO_GENERIC_SENSOR
+	range 1 20
+	help
+	  This setting establishes the total count of IPSO Generic
+	  Sensors instances available to the LWM2M client.
+
+config LWM2M_IPSO_GENERIC_SENSOR_IPSO_OBJECT_ID
+	int "Maximum # of IPSO Generic Sensor object instances"
+	default 3303
+	depends on LWM2M_IPSO_GENERIC_SENSOR
+	help
+	  This is the object id of the sensor.
+	  Examples:
+	  3303 for temperature
+	  3304 for humidity
+	  3323 for pressure
+
+config LWM2M_IPSO_GENERIC_SENSOR_NAME
+	string "Name that will show up in debug output when object is created"
+	default "Generic"
+	depends on LWM2M_IPSO_GENERIC_SENSOR
+
+config LWM2M_IPSO_HUMIDITY_SENSOR
+	bool "IPSO Humidity Sensor Support"
+
+config LWM2M_IPSO_HUMIDITY_SENSOR_INSTANCE_COUNT
+	int "Maximum # of IPSO Humidity Sensor object instances"
+	default 1
+	depends on LWM2M_IPSO_HUMIDITY_SENSOR
+	range 1 20
+
+config LWM2M_IPSO_PRESSURE_SENSOR
+	bool "IPSO Pressure Sensor Support"
+
+config LWM2M_IPSO_PRESSURE_SENSOR_INSTANCE_COUNT
+	int "Maximum # of IPSO Pressure Sensor object instances"
+	default 1
+	depends on LWM2M_IPSO_PRESSURE_SENSOR
+	range 1 20
+
 endif # LWM2M_LWM2M_IPSO_SUPPORT
