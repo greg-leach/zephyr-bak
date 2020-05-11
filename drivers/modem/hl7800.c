@@ -2225,7 +2225,7 @@ int get_next_time_string_digit(int *failure_cnt, char **pp, int min, int max)
 	memset(digits, 0, sizeof(digits));
 	memcpy(digits, *pp, TIME_STRING_DIGIT_STRLEN);
 	*pp += TIME_STRING_DIGIT_STRLEN + TIME_STRING_SEPARATOR_STRLEN;
-	int result = strtol(digits, NULL, 0);
+	int result = strtol(digits, NULL, 10);
 	if (result > max) {
 		*failure_cnt += 1;
 		return max;
