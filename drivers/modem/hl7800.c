@@ -1217,8 +1217,8 @@ static int pkt_setup_ip_data(struct net_pkt *pkt, struct hl7800_socket *sock)
 		(void)memset(tcp, 0, NET_TCPH_LEN);
 
 		/* Setup TCP header */
-		tcp->src_port = src_port;
-		tcp->dst_port = dst_port;
+		tcp->src_port = dst_port;
+		tcp->dst_port = src_port;
 
 		if (net_pkt_set_data(pkt, &tcp_access)) {
 			return -1;
