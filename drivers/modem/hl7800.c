@@ -284,7 +284,7 @@ static const struct mdm_control_pinconfig pinconfig[] = {
 #define DNS_WORK_DELAY_SECS 1
 #define IFACE_WORK_DELAY K_MSEC(500)
 #define WAIT_FOR_KSUP_RETRIES 5
-#define ALLOW_SLEEP_DELAY_SECS K_SECONDS(5)
+#define ALLOW_SLEEP_DELAY_SECS K_SECONDS(2)
 
 #define PROFILE_LINE_1                                                         \
 	"E1 Q0 V1 X4 &C1 &D1 &R1 &S0 +IFC=2,2 &K3 +IPR=115200 +FCLASS0\r\n"
@@ -473,6 +473,7 @@ struct hl7800_iface_ctx {
 
 	/* modem state */
 	bool allowSleep;
+	bool uartOn;
 	enum mdm_hl7800_sleep_state sleep_state;
 	enum mdm_hl7800_network_state network_state;
 	enum net_operator_status operator_status;
@@ -505,7 +506,6 @@ static void generate_sleep_state_event(void);
 static int modem_boot_handler(char *reason);
 static void mdm_vgpio_work_cb(struct k_work *item);
 static void mdm_reset_work_callback(struct k_work *item);
-static bool is_network_ready(void);
 
 #ifdef CONFIG_NEWLIB_LIBC
 static bool convert_time_string_to_struct(struct tm *tm, s32_t *offset,
@@ -1431,6 +1431,7 @@ static void dns_work_cb(struct k_work *work)
 #ifdef CONFIG_DNS_RESOLVER
 	int ret;
 	/* set new DNS addr in DNS resolver */
+	LOG_DBG("Refresh DNS resolver");
 	struct dns_resolve_context *dnsCtx = dns_resolve_get_default();
 	dns_resolve_close(dnsCtx);
 	const char *dns_servers_str[] = { ictx.dns_string };
@@ -3128,12 +3129,15 @@ static void hl7800_rx(void)
 static void shutdown_uart(void)
 {
 #ifdef CONFIG_DEVICE_POWER_MANAGEMENT
-	Z_LOG(HL7800_IO_LOG_LEVEL, "Power OFF the UART");
-	uart_irq_rx_disable(ictx.mdm_ctx.uart_dev);
-	int rc = device_set_power_state(ictx.mdm_ctx.uart_dev,
-					DEVICE_PM_OFF_STATE, NULL, NULL);
-	if (rc) {
-		LOG_ERR("Error disabling UART peripheral (%d)", rc);
+	if (ictx.uartOn) {
+		Z_LOG(HL7800_IO_LOG_LEVEL, "Power OFF the UART");
+		uart_irq_rx_disable(ictx.mdm_ctx.uart_dev);
+		int rc = device_set_power_state(
+			ictx.mdm_ctx.uart_dev, DEVICE_PM_OFF_STATE, NULL, NULL);
+		if (rc) {
+			LOG_ERR("Error disabling UART peripheral (%d)", rc);
+		}
+		ictx.uartOn = false;
 	}
 #endif
 }
@@ -3141,13 +3145,17 @@ static void shutdown_uart(void)
 static void power_on_uart(void)
 {
 #ifdef CONFIG_DEVICE_POWER_MANAGEMENT
-	Z_LOG(HL7800_IO_LOG_LEVEL, "Power ON the UART");
-	int rc = device_set_power_state(ictx.mdm_ctx.uart_dev,
-					DEVICE_PM_ACTIVE_STATE, NULL, NULL);
-	if (rc) {
-		LOG_ERR("Error enabling UART peripheral (%d)", rc);
+	if (!ictx.uartOn) {
+		Z_LOG(HL7800_IO_LOG_LEVEL, "Power ON the UART");
+		int rc = device_set_power_state(ictx.mdm_ctx.uart_dev,
+						DEVICE_PM_ACTIVE_STATE, NULL,
+						NULL);
+		if (rc) {
+			LOG_ERR("Error enabling UART peripheral (%d)", rc);
+		}
+		uart_irq_rx_enable(ictx.mdm_ctx.uart_dev);
+		ictx.uartOn = true;
 	}
-	uart_irq_rx_enable(ictx.mdm_ctx.uart_dev);
 #endif
 }
 
@@ -3224,6 +3232,16 @@ void mdm_gpio6_callback_isr(struct device *port, struct gpio_callback *cb,
 	gpio_pin_read(ictx.gpio_port_dev[MDM_GPIO6], pinconfig[MDM_GPIO6].pin,
 		      &ictx.gpio6_state);
 	Z_LOG(HL7800_IO_LOG_LEVEL, "MDM_GPIO6:%d", ictx.gpio6_state);
+
+	if (!ictx.gpio6_state) {
+		/* HL7800 is not awake, shut down UART to save power */
+		shutdown_uart();
+
+		ictx.reconfig_GPRS = true;
+	} else {
+		power_on_uart();
+	}
+
 	check_hl7800_awake();
 }
 
@@ -3620,10 +3638,73 @@ void mdm_hl7800_register_event_callback(
 
 /*** OFFLOAD FUNCTIONS ***/
 
-static bool is_network_ready(void)
+static int configure_UDP_socket(struct hl7800_socket *sock)
 {
-	return (ictx.sleep_state == HL7800_SLEEP_STATE_AWAKE &&
-		net_if_is_up(ictx.iface));
+	int ret = 0;
+
+	ret = send_at_cmd(sock, "AT+KUDPCFG=1,0", MDM_CMD_SEND_TIMEOUT, 0,
+			  false);
+	if (ret < 0) {
+		LOG_ERR("AT+KUDPCFG ret:%d", ret);
+		goto done;
+	}
+
+	/* Now wait for +KUDP_IND or +KUDP_NOTIF to ensure
+	 * the socket was created.
+	 */
+	ret = k_sem_take(&sock->sock_send_sem, MDM_CMD_CONN_TIMEOUT);
+	if (ret == 0) {
+		ret = ictx.last_error;
+	} else if (ret == -EAGAIN) {
+		ret = -ETIMEDOUT;
+	}
+	if (ret < 0) {
+		LOG_ERR("+KUDP_IND/NOTIF ret:%d", ret);
+		goto done;
+	}
+done:
+	return ret;
+}
+
+static int reconfigure_UDP_sockets(void)
+{
+	int i, ret = 0;
+	struct hl7800_socket *sock = NULL;
+
+	for (i = 0; i < MDM_MAX_SOCKETS; i++) {
+		sock = &ictx.sockets[i];
+		if ((sock->context != NULL) && (sock->created) &&
+		    (sock->type == SOCK_DGRAM)) {
+			/* reconfigure UDP socket so it is ready for use */
+			ret = configure_UDP_socket(sock);
+			if (ret < 0) {
+				goto done;
+			}
+		}
+	}
+done:
+	return ret;
+}
+
+static int reconfigure_GPRS_connection(void)
+{
+	int ret = 0;
+
+	if (ictx.reconfig_GPRS) {
+		ictx.reconfig_GPRS = false;
+		ret = send_at_cmd(NULL, SETUP_GPRS_CONNECTION_CMD,
+				  MDM_CMD_SEND_TIMEOUT, 0, false);
+		if (ret < 0) {
+			LOG_ERR("AT+KCNXCFG= ret:%d", ret);
+			goto done;
+		}
+
+		/* reconfigure any UDP sockets that were already setup */
+		ret = reconfigure_UDP_sockets();
+	}
+
+done:
+	return ret;
 }
 
 static int offload_get(sa_family_t family, enum net_sock_type type,
@@ -3632,10 +3713,6 @@ static int offload_get(sa_family_t family, enum net_sock_type type,
 {
 	int ret = 0;
 	struct hl7800_socket *sock = NULL;
-
-	if (!is_network_ready()) {
-		return -EBUSY;
-	}
 
 	hl7800_lock();
 	/* new socket */
@@ -3659,37 +3736,17 @@ static int offload_get(sa_family_t family, enum net_sock_type type,
 	*/
 	if (type == SOCK_DGRAM) {
 		wakeup_hl7800();
-		/* check if we need to re-setup GPRS connection */
-		if (ictx.reconfig_GPRS) {
-			ictx.reconfig_GPRS = false;
-			ret = send_at_cmd(sock, SETUP_GPRS_CONNECTION_CMD,
-					  MDM_CMD_SEND_TIMEOUT, 0, false);
-			if (ret < 0) {
-				LOG_ERR("AT+KCNXCFG= ret:%d", ret);
-				socket_put(sock);
-				goto done;
-			}
-		}
 
-		ret = send_at_cmd(sock, "AT+KUDPCFG=1,0", MDM_CMD_SEND_TIMEOUT,
-				  0, false);
-		if (ret < 0) {
-			LOG_ERR("AT+KUDPCFG ret:%d", ret);
+		/* reconfig GPRS connection if necessary */
+		if (reconfigure_GPRS_connection() < 0) {
 			socket_put(sock);
 			goto done;
 		}
 
-		/* Now wait for +KUDP_IND or +KUDP_NOTIF to ensure
-		*  the socket was created */
-		ret = k_sem_take(&sock->sock_send_sem, MDM_CMD_CONN_TIMEOUT);
-		if (ret == 0) {
-			ret = ictx.last_error;
-		} else if (ret == -EAGAIN) {
-			ret = -ETIMEDOUT;
-		}
+		ret = configure_UDP_socket(sock);
 		if (ret < 0) {
-			LOG_ERR("+KUDP_IND/NOTIF ret:%d", ret);
 			socket_put(sock);
+			goto done;
 		}
 	}
 done:
@@ -3752,10 +3809,6 @@ static int offload_connect(struct net_context *context,
 	char cmd_cfg[sizeof("AT+KTCPCFG=#,#,\"###.###.###.###\",#####")];
 	char cmd_con[sizeof("AT+KTCPCNX=##")];
 	struct hl7800_socket *sock;
-
-	if (!is_network_ready()) {
-		return -EBUSY;
-	}
 
 	if (!context || !addr) {
 		return -EINVAL;
@@ -3870,10 +3923,6 @@ static int offload_sendto(struct net_pkt *pkt, const struct sockaddr *dst_addr,
 	struct hl7800_socket *sock;
 	int ret, dst_port = 0;
 
-	if (!is_network_ready()) {
-		return -EBUSY;
-	}
-
 	if (!context) {
 		return -EINVAL;
 	}
@@ -3905,7 +3954,10 @@ static int offload_sendto(struct net_pkt *pkt, const struct sockaddr *dst_addr,
 	}
 
 	hl7800_lock();
+
 	wakeup_hl7800();
+
+	reconfigure_GPRS_connection();
 
 	ret = send_data(sock, pkt);
 
@@ -3992,6 +4044,7 @@ static int offload_put(struct net_context *context)
 	k_delayed_work_cancel(&sock->notif_work);
 
 	hl7800_lock();
+
 	/* if GPRS connection needs to be reconfigured,
 	*  we dont need to issue the close command, just need to cleanup */
 	if (ictx.reconfig_GPRS || !net_if_is_up(ictx.iface)) {
@@ -4103,6 +4156,7 @@ static int hl7800_init(struct device *dev)
 				    sock_notif_cb_work);
 		k_sem_init(&ictx.sockets[i].sock_send_sem, 0, 1);
 	}
+	ictx.last_socket_id = 0;
 	k_sem_init(&ictx.response_sem, 0, 1);
 	k_sem_init(&ictx.mdm_awake, 0, 1);
 
@@ -4111,12 +4165,13 @@ static int hl7800_init(struct device *dev)
 		       K_THREAD_STACK_SIZEOF(hl7800_workq_stack),
 		       WORKQ_PRIORITY);
 
+	/* init work tasks */
+	k_delayed_work_init(&ictx.rssi_query_work, hl7800_rssi_query_work);
 	k_delayed_work_init(&ictx.iface_status_work, iface_status_work_cb);
 	k_delayed_work_init(&ictx.dns_work, dns_work_cb);
 	k_work_init(&ictx.mdm_vgpio_work, mdm_vgpio_work_cb);
 	k_delayed_work_init(&ictx.mdm_reset_work, mdm_reset_work_callback);
 	k_delayed_work_init(&ictx.allow_sleep_work, allow_sleep_work_callback);
-	ictx.last_socket_id = 0;
 
 	/* setup port devices and pin directions */
 	for (i = 0; i < MAX_MDM_CONTROL_PINS; i++) {
@@ -4136,6 +4191,9 @@ static int hl7800_init(struct device *dev)
 			return ret;
 		}
 	}
+
+	/* when this driver starts, the UART peripheral is already enabled */
+	ictx.uartOn = true;
 
 	modem_assert_wake(false);
 	modem_assert_uart_dtr(false);
@@ -4233,9 +4291,6 @@ static int hl7800_init(struct device *dev)
 				(k_thread_entry_t)hl7800_rx, NULL, NULL, NULL,
 				RX_THREAD_PRIORITY, 0, K_NO_WAIT),
 		"hl7800 rx");
-
-	/* init RSSI query */
-	k_delayed_work_init(&ictx.rssi_query_work, hl7800_rssi_query_work);
 
 	ret = modem_reset_and_configure();
 
