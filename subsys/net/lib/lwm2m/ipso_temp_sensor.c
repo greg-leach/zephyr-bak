@@ -165,7 +165,7 @@ static struct lwm2m_engine_obj_inst *temp_sensor_create(u16_t obj_inst_id)
 	units[index][0] = '\0';
 	min_measured_value[index].val1 = INT32_MAX;
 	min_measured_value[index].val2 = 0;
-	max_measured_value[index].val1 = -INT32_MAX;
+	max_measured_value[index].val1 = INT32_MIN;
 	max_measured_value[index].val2 = 0;
 	min_range_value[index].val1 = 0;
 	min_range_value[index].val2 = 0;
