@@ -24,20 +24,20 @@ config MODEM_HL7800_APN_NAME
 	  This setting is used in the AT+KCNXCFG command to set the APN name
 	  for the network connection context.
 
-choice
-	prompt "Radio Access Technology (RAT)"
-	default MODEM_HL7800_CAT_M1
+config MODEM_HL7800_SET_APN_NAME_ON_STARTUP
+	bool "If true and the APN doesn't match MODEM_HL7800_APN_NAME on startup, then it will be set."
 
-config MODEM_HL7800_CAT_M1
-	bool "LTE cat M1"
+config MODEM_HL7800_DEFAULT_RAT
+	int "Radio Access Technology (Mode) that will be set on modem init"
+	default -1
+	range -1 1
 	help
-	  Enable LTE cat M1 (LTE-M1) mode
-
-config MODEM_HL7800_CAT_NB1
-	bool "LTE cat NB1"
-	help
-	  Enable LTE cat NB1 (NB-IoT) mode
-endchoice
+		-1 Don't change current mode
+		0 LTE category M1 (LTE-M1)
+		1 LTE category NB1 (NB-IoT)
+		If the mode doesn't match this setting on startup, then it will be set.
+		An application can change the mode, but that setting is temporary
+		[until the next reset] unless MODEM_HL7800_DEFAULT_RAT is -1.
 
 menuconfig MODEM_HL7800_CONFIGURE_BANDS
 	bool "Configure modem bands"

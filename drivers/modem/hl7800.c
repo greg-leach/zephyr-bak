@@ -470,6 +470,7 @@ struct hl7800_iface_ctx {
 	s32_t local_time_offset;
 #endif
 	bool local_time_valid;
+	bool configured;
 };
 
 struct cmd_handler {
@@ -493,6 +494,7 @@ static void generate_sleep_state_event(void);
 static int modem_boot_handler(char *reason);
 static void mdm_vgpio_work_cb(struct k_work *item);
 static void mdm_reset_work_callback(struct k_work *item);
+static int write_apn(char *access_point_name);
 
 #ifdef CONFIG_NEWLIB_LIBC
 static bool convert_time_string_to_struct(struct tm *tm, s32_t *offset,
@@ -883,23 +885,14 @@ s32_t mdm_hl7800_send_at_cmd(const u8_t *data)
 s32_t mdm_hl7800_update_apn(char *access_point_name)
 {
 	int ret = -EINVAL;
-	char cmd_string[MDM_HL7800_APN_CMD_MAX_SIZE];
 
 	hl7800_lock();
 	wakeup_hl7800();
 	ictx.last_socket_id = 0;
-
-	/* PDP Context */
-	memset(cmd_string, 0, MDM_HL7800_APN_CMD_MAX_SIZE);
-	strncat(cmd_string, "AT+CGDCONT=1,\"IP\",\"",
-		MDM_HL7800_APN_CMD_MAX_STRLEN);
-	strncat(cmd_string, access_point_name, MDM_HL7800_APN_CMD_MAX_STRLEN);
-	strncat(cmd_string, "\"", MDM_HL7800_APN_CMD_MAX_STRLEN);
-	SEND_AT_CMD_ONCE_EXPECT_OK(cmd_string);
-
-error:
+	ret = write_apn(access_point_name);
 	allow_sleep(true);
 	hl7800_unlock();
+
 	if (ret >= 0) {
 		/* After a reset the APN will be re-read from the modem
 		 * and an event will be generated.
@@ -944,9 +937,17 @@ error:
 		/* Changing the RAT causes the modem to reset. */
 		ret = modem_boot_handler("RAT changed");
 	}
-	/* restore the sleep state */
+
 	allow_sleep(true);
 	hl7800_unlock();
+
+	/* A reset and reconfigure ensures the modem configuration and
+	state are valid */
+	if (ret >= 0) {
+		k_delayed_work_submit_to_queue(&hl7800_workq,
+					       &ictx.mdm_reset_work, K_NO_WAIT);
+	}
+
 	return ret;
 }
 
@@ -3353,6 +3354,7 @@ static int modem_reset_and_configure(void)
 {
 	int ret = 0;
 	bool allowSleep = false;
+
 #ifdef CONFIG_MODEM_HL7800_EDRX
 	int edrxActType;
 	char setEdrxMsg[sizeof("AT+CEDRXS=2,4,\"0000\"")];
@@ -3388,6 +3390,24 @@ reboot:
 
 	/* Query current Radio Access Technology (RAT) */
 	SEND_AT_CMD_EXPECT_OK("AT+KSRAT?");
+
+	/* If CONFIG_MODEM_HL7800_DEFAULT_RAT isn't the value of -1, then
+	set the default radio mode. This is conditioned on being the first
+	time the modem has been configured because the API also allows the
+	RAT to be changed (and will reset the modem). */
+	if (mdm_hl7800_valid_rat(CONFIG_MODEM_HL7800_DEFAULT_RAT) &&
+	    !ictx.configured) {
+		if (ictx.mdm_rat != CONFIG_MODEM_HL7800_DEFAULT_RAT) {
+			if (CONFIG_MODEM_HL7800_DEFAULT_RAT == MDM_RAT_CAT_M1) {
+				SEND_AT_CMD_ONCE_EXPECT_OK("AT+KSRAT=0");
+			} else { /* MDM_RAT_CAT_NB1 */
+				SEND_AT_CMD_ONCE_EXPECT_OK("AT+KSRAT=1");
+			}
+			if (ret >= 0) {
+				goto reboot;
+			}
+		}
+	}
 
 	SEND_AT_CMD_EXPECT_OK("AT+KBNDCFG?");
 
@@ -3563,6 +3583,20 @@ reboot:
 	 */
 	SEND_AT_CMD_IGNORE_ERROR("AT+WPPP?");
 
+#if CONFIG_MODEM_HL7800_SET_APN_NAME_ON_STARTUP
+	if (!configured) {
+		if (strncmp(ictx.mdm_apn.value, CONFIG_MODEM_HL7800_APN_NAME,
+			    MDM_HL7800_APN_MAX_STRLEN) != 0) {
+			ret = write_apn(CONFIG_MODEM_HL7800_APN_NAME);
+			if (ret < 0) {
+				goto error;
+			} else {
+				goto reboot;
+			}
+		}
+	}
+#endif
+
 	/* query the network status in case we already registered */
 	SEND_COMPLEX_AT_CMD("AT+CEREG?");
 
@@ -3574,6 +3608,7 @@ reboot:
 	 */
 	LOG_INF("Modem ready!");
 	ictx.restarting = false;
+	ictx.configured = true;
 	allow_sleep(allowSleep);
 	/* trigger APN update event */
 	event_handler(HL7800_EVENT_APN_UPDATE, &ictx.mdm_apn);
@@ -3581,12 +3616,25 @@ reboot:
 
 error:
 	LOG_ERR("Unable to configure modem");
+	ictx.configured = false;
 	set_network_state(HL7800_UNABLE_TO_CONFIGURE);
 	modem_reset();
 	/* Kernel will fault with non-zero return value.
 	 * Allow other parts of application to run when modem cannot be configured.
 	 */
 	return 0;
+}
+
+static int write_apn(char *access_point_name)
+{
+	char cmd_string[MDM_HL7800_APN_CMD_MAX_SIZE];
+	/* PDP Context */
+	memset(cmd_string, 0, MDM_HL7800_APN_CMD_MAX_SIZE);
+	strncat(cmd_string, "AT+CGDCONT=1,\"IP\",\"",
+		MDM_HL7800_APN_CMD_MAX_STRLEN);
+	strncat(cmd_string, access_point_name, MDM_HL7800_APN_CMD_MAX_STRLEN);
+	strncat(cmd_string, "\"", MDM_HL7800_APN_CMD_MAX_STRLEN);
+	return send_at_cmd(NULL, cmd_string, MDM_CMD_SEND_TIMEOUT, 0, false);
 }
 
 static void mdm_reset_work_callback(struct k_work *item)
@@ -3697,7 +3745,7 @@ static int configure_TCP_socket(struct hl7800_socket *sock)
 #endif
 #if defined(CONFIG_NET_IPV4)
 		if (sock->dst.sa_family == AF_INET) {
-			dst_port = net_sin(&sock->dst)->sin_port;
+		dst_port = net_sin(&sock->dst)->sin_port;
 	} else
 #endif
 	{
