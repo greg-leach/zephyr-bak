@@ -106,7 +106,7 @@ DEVICE_DECLARE(sdhc_0);
 /* The SD protocol requires sending ones while reading but Zephyr
  * defaults to writing zeros.
  */
-static const u8_t sdhc_ones[] = {
+static u8_t sdhc_ones[] = {
 	0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
 	0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
 	0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
@@ -354,7 +354,7 @@ static int sdhc_tx_cmd(struct sdhc_data *data, u8_t cmd, u32_t payload)
 	/* Encode the command */
 	buf[0] = SDHC_TX | (cmd & ~SDHC_START);
 	sys_put_be32(payload, &buf[1]);
-	buf[SDHC_CMD_BODY_SIZE] = crc7_be(0, buf, SDHC_CMD_BODY_SIZE);
+	buf[SDHC_CMD_BODY_SIZE] = (crc7_be(0, buf, SDHC_CMD_BODY_SIZE) + 1);
 
 	return sdhc_tx(data, buf, sizeof(buf));
 }
