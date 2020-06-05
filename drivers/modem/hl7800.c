@@ -3242,6 +3242,7 @@ static void mark_sockets_for_reconfig(void)
 void mdm_gpio6_callback_isr(struct device *port, struct gpio_callback *cb,
 			    u32_t pins)
 {
+#ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
 	gpio_pin_read(ictx.gpio_port_dev[MDM_GPIO6], pinconfig[MDM_GPIO6].pin,
 		      &ictx.gpio6_state);
 	Z_LOG(HL7800_IO_LOG_LEVEL, "MDM_GPIO6:%d", ictx.gpio6_state);
@@ -3259,6 +3260,9 @@ void mdm_gpio6_callback_isr(struct device *port, struct gpio_callback *cb,
 	}
 
 	check_hl7800_awake();
+#else
+	Z_LOG(HL7800_IO_LOG_LEVEL, "Spurious gpio6 interrupt from the modem");
+#endif
 }
 
 void mdm_uart_cts_callback(struct device *port, struct gpio_callback *cb,
