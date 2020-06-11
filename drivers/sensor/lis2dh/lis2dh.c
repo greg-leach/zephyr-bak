@@ -451,14 +451,6 @@ int lis2dh_init(struct device *dev)
 		return status;
 	}
 
-#ifdef CONFIG_LIS2DH_TRIGGER
-	status = lis2dh_init_interrupt(dev);
-	if (status < 0) {
-		LOG_ERR("Failed to initialize interrupts.");
-		return status;
-	}
-#endif
-
 	LOG_INF("bus=%s fs=%d, odr=0x%x lp_en=0x%x scale=%d",
 		    LIS2DH_BUS_DEV_NAME, 1 << (LIS2DH_FS_IDX + 1),
 		    LIS2DH_ODR_IDX, (u8_t)LIS2DH_LP_EN_BIT, lis2dh->scale);
