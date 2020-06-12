@@ -132,7 +132,7 @@ int lis2dh_acc_slope_config(struct device *dev, enum sensor_attribute attr,
 		/* 7 bit full range value */
 		reg_val = 128 / range_g * (slope_th_ums2 - 1) / SENSOR_G;
 
-		LOG_INF("int2_ths=0x%x range_g=%d ums2=%u", reg_val,
+		LOG_INF("int1_ths=0x%x range_g=%d ums2=%u", reg_val,
 			    range_g, slope_th_ums2 - 1);
 
 		status = lis2dh_reg_write_byte(dev, LIS2DH_REG_INT1_THS,
