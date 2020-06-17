@@ -17,15 +17,21 @@ menuconfig MODEM_HL7800
 
 if MODEM_HL7800
 
+config MODEM_HL7800_SET_APN_NAME_ON_STARTUP
+	bool "Set APN name during driver init"
+	help
+	  If APN doesn't match MODEM_HL7800_APN_NAME on startup, then it will be set.
+
+if MODEM_HL7800_SET_APN_NAME_ON_STARTUP
+
 config MODEM_HL7800_APN_NAME
 	string "APN name for establishing network connection"
 	default ""
 	help
-	  This setting is used in the AT+KCNXCFG command to set the APN name
-	  for the network connection context.
+	  This setting is used in the AT+CGDCONT command to set the APN name
+	  for the PDP context.
 
-config MODEM_HL7800_SET_APN_NAME_ON_STARTUP
-	bool "If true and the APN doesn't match MODEM_HL7800_APN_NAME on startup, then it will be set."
+endif # MODEM_HL7800_SET_APN_NAME_ON_STARTUP
 
 config MODEM_HL7800_DEFAULT_RAT
 	int "Radio Access Technology (Mode) that will be set on modem init"
