@@ -3225,6 +3225,7 @@ void mdm_uart_dsr_callback_isr(struct device *port, struct gpio_callback *cb,
 	Z_LOG(HL7800_IO_LOG_LEVEL, "MDM_UART_DSR:%d", ictx.dsr_state);
 }
 
+#ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
 static void mark_sockets_for_reconfig(void)
 {
 	int i;
@@ -3238,6 +3239,7 @@ static void mark_sockets_for_reconfig(void)
 		}
 	}
 }
+#endif
 
 void mdm_gpio6_callback_isr(struct device *port, struct gpio_callback *cb,
 			    u32_t pins)
@@ -3588,7 +3590,7 @@ reboot:
 	SEND_AT_CMD_IGNORE_ERROR("AT+WPPP?");
 
 #if CONFIG_MODEM_HL7800_SET_APN_NAME_ON_STARTUP
-	if (!configured) {
+	if (!ictx.configured) {
 		if (strncmp(ictx.mdm_apn.value, CONFIG_MODEM_HL7800_APN_NAME,
 			    MDM_HL7800_APN_MAX_STRLEN) != 0) {
 			ret = write_apn(CONFIG_MODEM_HL7800_APN_NAME);
