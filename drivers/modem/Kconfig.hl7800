@@ -55,7 +55,7 @@ if MODEM_HL7800_CONFIGURE_BANDS
 
 config MODEM_HL7800_BAND_1
 	bool "Enable Band 1  (2000MHz)"
-	default "n"
+	default "y"
 	help
 	  Enable Band 1 (2000MHz)
 
@@ -67,7 +67,7 @@ config MODEM_HL7800_BAND_2
 
 config MODEM_HL7800_BAND_3
 	bool "Enable Band 3  (1800MHz)"
-	default "n"
+	default "y"
 	help
 	  Enable Band 3 (1800MHz)
 
@@ -85,7 +85,7 @@ config MODEM_HL7800_BAND_5
 
 config MODEM_HL7800_BAND_8
 	bool "Enable Band 8  (900MHz)"
-	default "n"
+	default "y"
 	help
 	  Enable Band 8 (900MHz)
 
@@ -121,7 +121,7 @@ config MODEM_HL7800_BAND_14
 
 config MODEM_HL7800_BAND_17
 	bool "Enable Band 17 (700MHz)"
-	default "y"
+	default "n"
 	help
 	  Enable Band 17 (700MHz)
 
@@ -163,7 +163,7 @@ config MODEM_HL7800_BAND_27
 
 config MODEM_HL7800_BAND_28
 	bool "Enable Band 28 (700MHz)"
-	default "n"
+	default "y"
 	help
 	  Enable Band 28 (700MHz)
 
