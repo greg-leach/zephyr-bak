@@ -221,7 +221,7 @@ struct lis2dh_data {
 	union lis2dh_sample sample;
 	/* current scaling factor, in micro m/s^2 / lsb */
 	u16_t scale;
-	s16_t temp_sample;
+	s8_t temp_sample;
 	bool has_temperature_sensor;
 
 #ifdef CONFIG_LIS2DH_TRIGGER

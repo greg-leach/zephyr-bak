@@ -11,7 +11,7 @@
 #include <logging/log.h>
 
 #define LOG_LEVEL CONFIG_SENSOR_LOG_LEVEL
-#define INVALID_TEMPERATURE -32768
+#define INVALID_TEMPERATURE -127
 
 LOG_MODULE_REGISTER(lis2dh);
 #include "lis2dh.h"
@@ -166,7 +166,7 @@ static int lis2dh_sample_fetch_temp(struct device *dev)
 {
 	int ret = 0;
 	struct lis2dh_data *lis2dh = dev->driver_data;
-	u8_t temp_raw[sizeof(u16_t)];
+	s8_t temp_raw[sizeof(u16_t)];
 
 	/*
 	 * the LIS3DH requires a 2 byte read for the temperature value
