@@ -4,27 +4,28 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#define DT_DRV_COMPAT swi_hl7800
+
 #define LOG_DOMAIN modem_hl7800
 #define LOG_LEVEL CONFIG_MODEM_LOG_LEVEL
 #include <logging/log.h>
 LOG_MODULE_REGISTER(LOG_DOMAIN);
 
-#include <kernel.h>
 #include <zephyr/types.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <ctype.h>
 #include <errno.h>
 #include <zephyr.h>
-#include <gpio.h>
+#include <drivers/gpio.h>
 #include <device.h>
 #include <init.h>
-#include <stdlib.h>
-#include <power.h>
-#include <uart.h>
 
-#include <net/net_if.h>
+#include <power/power.h>
+#include <drivers/uart.h>
+
 #include <net/net_context.h>
+#include <net/net_if.h>
 #include <net/net_offload.h>
 #include <net/net_pkt.h>
 #include <net/dns_resolve.h>
@@ -38,7 +39,7 @@ LOG_MODULE_REGISTER(LOG_DOMAIN);
 #include "udp_internal.h"
 #endif
 
-#include <drivers/modem/modem_receiver.h>
+#include "modem_receiver.h"
 #include <drivers/modem/hl7800.h>
 
 #define PREFIXED_SWITCH_CASE_RETURN_STRING(prefix, val)                        \
@@ -111,8 +112,8 @@ enum socket_state {
 
 struct mdm_control_pinconfig {
 	char *dev_name;
-	u32_t pin;
-	int config;
+	gpio_pin_t pin;
+	gpio_flags_t config;
 };
 
 #define PINCONFIG(name_, pin_, config_)                                        \
@@ -129,9 +130,6 @@ enum mdm_control_pins {
 	MDM_UART_DTR,
 	MDM_VGPIO,
 	MDM_UART_DSR,
-	MDM_UART_TX,
-	MDM_UART_RTS,
-	MDM_UART_RX,
 	MDM_UART_CTS,
 	MDM_GPIO6,
 	MAX_MDM_CONTROL_PINS,
@@ -141,67 +139,51 @@ enum net_operator_status { NO_OPERATOR, REGISTERED };
 
 static const struct mdm_control_pinconfig pinconfig[] = {
 	/* MDM_RESET */
-	PINCONFIG(DT_SWI_HL7800_0_MDM_RESET_GPIOS_CONTROLLER,
-		  DT_SWI_HL7800_0_MDM_RESET_GPIOS_PIN,
-		  (GPIO_DIR_OUT | GPIO_DS_DISCONNECT_HIGH)),
+	PINCONFIG(DT_INST_GPIO_LABEL(0, mdm_reset_gpios),
+		  DT_INST_GPIO_PIN(0, mdm_reset_gpios),
+		  (GPIO_OUTPUT | GPIO_OPEN_DRAIN)),
 
 	/* MDM_WAKE */
-	PINCONFIG(DT_SWI_HL7800_0_MDM_WAKE_GPIOS_CONTROLLER,
-		  DT_SWI_HL7800_0_MDM_WAKE_GPIOS_PIN,
-		  (GPIO_DIR_OUT | GPIO_DS_DISCONNECT_LOW)),
+	PINCONFIG(DT_INST_GPIO_LABEL(0, mdm_wake_gpios),
+		  DT_INST_GPIO_PIN(0, mdm_wake_gpios),
+		  (GPIO_OUTPUT | GPIO_OPEN_SOURCE)),
 
 	/* MDM_PWR_ON */
-	PINCONFIG(DT_SWI_HL7800_0_MDM_PWR_ON_GPIOS_CONTROLLER,
-		  DT_SWI_HL7800_0_MDM_PWR_ON_GPIOS_PIN,
-		  (GPIO_DIR_OUT | GPIO_DS_DISCONNECT_HIGH)),
+	PINCONFIG(DT_INST_GPIO_LABEL(0, mdm_pwr_on_gpios),
+		  DT_INST_GPIO_PIN(0, mdm_pwr_on_gpios),
+		  (GPIO_OUTPUT | GPIO_OPEN_DRAIN)),
 
 	/* MDM_FAST_SHUTD */
-	PINCONFIG(DT_SWI_HL7800_0_MDM_FAST_SHUTD_GPIOS_CONTROLLER,
-		  DT_SWI_HL7800_0_MDM_FAST_SHUTD_GPIOS_PIN,
-		  (GPIO_DIR_OUT | GPIO_DS_DISCONNECT_HIGH)),
+	PINCONFIG(DT_INST_GPIO_LABEL(0, mdm_fast_shutd_gpios),
+		  DT_INST_GPIO_PIN(0, mdm_fast_shutd_gpios),
+		  (GPIO_OUTPUT | GPIO_OPEN_DRAIN)),
 
 	/* MDM_UART_DTR */
-	PINCONFIG(DT_SWI_HL7800_0_MDM_UART_DTR_GPIOS_CONTROLLER,
-		  DT_SWI_HL7800_0_MDM_UART_DTR_GPIOS_PIN, GPIO_DIR_OUT),
+	PINCONFIG(DT_INST_GPIO_LABEL(0, mdm_uart_dtr_gpios),
+		  DT_INST_GPIO_PIN(0, mdm_uart_dtr_gpios), GPIO_OUTPUT),
 
 	/* MDM_VGPIO */
-	PINCONFIG(DT_SWI_HL7800_0_MDM_VGPIO_GPIOS_CONTROLLER,
-		  DT_SWI_HL7800_0_MDM_VGPIO_GPIOS_PIN,
-		  (GPIO_DIR_IN | GPIO_INT | GPIO_INT_EDGE |
-		   GPIO_INT_DOUBLE_EDGE)),
+	PINCONFIG(DT_INST_GPIO_LABEL(0, mdm_vgpio_gpios),
+		  DT_INST_GPIO_PIN(0, mdm_vgpio_gpios),
+		  (GPIO_INPUT | GPIO_INT_EDGE_BOTH)),
 
 	/* MDM_UART_DSR */
-	PINCONFIG(DT_SWI_HL7800_0_MDM_UART_DSR_GPIOS_CONTROLLER,
-		  DT_SWI_HL7800_0_MDM_UART_DSR_GPIOS_PIN,
-		  (GPIO_DIR_IN | GPIO_INT | GPIO_INT_EDGE |
-		   GPIO_INT_DOUBLE_EDGE)),
-
-	/* MDM_UART_TX */
-	PINCONFIG(DT_SWI_HL7800_0_MDM_UART_TX_GPIOS_CONTROLLER,
-		  DT_SWI_HL7800_0_MDM_UART_TX_GPIOS_PIN, GPIO_DIR_OUT),
-
-	/* MDM_UART_RTS */
-	PINCONFIG(DT_SWI_HL7800_0_MDM_UART_RTS_GPIOS_CONTROLLER,
-		  DT_SWI_HL7800_0_MDM_UART_RTS_GPIOS_PIN, GPIO_DIR_OUT),
-
-	/* MDM_UART_RX */
-	PINCONFIG(DT_SWI_HL7800_0_MDM_UART_RX_GPIOS_CONTROLLER,
-		  DT_SWI_HL7800_0_MDM_UART_RX_GPIOS_PIN, GPIO_DIR_IN),
+	PINCONFIG(DT_INST_GPIO_LABEL(0, mdm_uart_dsr_gpios),
+		  DT_INST_GPIO_PIN(0, mdm_uart_dsr_gpios),
+		  (GPIO_INPUT | GPIO_INT_EDGE_BOTH)),
 
 	/* MDM_UART_CTS */
-	PINCONFIG(DT_SWI_HL7800_0_MDM_UART_CTS_GPIOS_CONTROLLER,
-		  DT_SWI_HL7800_0_MDM_UART_CTS_GPIOS_PIN,
-		  (GPIO_DIR_IN | GPIO_INT | GPIO_INT_EDGE |
-		   GPIO_INT_DOUBLE_EDGE)),
+	PINCONFIG(DT_INST_GPIO_LABEL(0, mdm_uart_cts_gpios),
+		  DT_INST_GPIO_PIN(0, mdm_uart_cts_gpios),
+		  (GPIO_INPUT | GPIO_INT_EDGE_BOTH)),
 
 	/* MDM_GPIO6 */
-	PINCONFIG(DT_SWI_HL7800_0_MDM_GPIO6_GPIOS_CONTROLLER,
-		  DT_SWI_HL7800_0_MDM_GPIO6_GPIOS_PIN,
-		  (GPIO_DIR_IN | GPIO_INT | GPIO_INT_EDGE |
-		   GPIO_INT_DOUBLE_EDGE)),
+	PINCONFIG(DT_INST_GPIO_LABEL(0, mdm_gpio6_gpios),
+		  DT_INST_GPIO_PIN(0, mdm_gpio6_gpios),
+		  (GPIO_INPUT | GPIO_INT_EDGE_BOTH)),
 };
 
-#define MDM_UART_DEV_NAME DT_SWI_HL7800_0_BUS_NAME
+#define MDM_UART_DEV_NAME DT_INST_BUS_LABEL(0)
 
 #define MDM_WAKE_ASSERTED 1 /* Asserted keeps the module awake */
 #define MDM_WAKE_NOT_ASSERTED 0
@@ -239,7 +221,7 @@ static const struct mdm_control_pinconfig pinconfig[] = {
 
 #define CMD_HANDLER(cmd_, cb_)                                                 \
 	{                                                                      \
-		.cmd = cmd_, .cmd_len = (u16_t)sizeof(cmd_) - 1,               \
+		.cmd = cmd_, .cmd_len = (uint16_t)sizeof(cmd_) - 1,            \
 		.func = on_cmd_##cb_                                           \
 	}
 
@@ -343,7 +325,7 @@ const char TIME_STRING_FORMAT[] = "\"yy/MM/dd,hh:mm:ss?zz\"";
 NET_BUF_POOL_DEFINE(mdm_recv_pool, MDM_RECV_MAX_BUF, MDM_RECV_BUF_SIZE, 0,
 		    NULL);
 
-static u8_t mdm_recv_buf[MDM_MAX_DATA_LENGTH];
+static uint8_t mdm_recv_buf[MDM_MAX_DATA_LENGTH];
 
 static K_SEM_DEFINE(hl7800_RX_lock_sem, 1, 1);
 static K_SEM_DEFINE(hl7800_TX_lock_sem, 1, 1);
@@ -395,12 +377,12 @@ struct hl7800_socket {
 
 struct hl7800_iface_ctx {
 	struct net_if *iface;
-	u8_t mac_addr[6];
+	uint8_t mac_addr[6];
 	struct in_addr ipv4Addr, subnet, gateway, dns;
 	bool restarting;
 	bool initialized;
 	bool wait_for_KSUP;
-	u32_t wait_for_KSUP_tries;
+	uint32_t wait_for_KSUP_tries;
 	bool reconfig_IP_connection;
 	char dns_string[sizeof("###.###.###.###")];
 	char no_id_resp_cmd[NO_ID_RESP_CMD_MAX_LENGTH];
@@ -412,10 +394,10 @@ struct hl7800_iface_ctx {
 	struct gpio_callback mdm_uart_dsr_cb;
 	struct gpio_callback mdm_gpio6_cb;
 	struct gpio_callback mdm_uart_cts_cb;
-	u32_t vgpio_state;
-	u32_t dsr_state;
-	u32_t gpio6_state;
-	u32_t cts_state;
+	uint32_t vgpio_state;
+	uint32_t dsr_state;
+	uint32_t gpio6_state;
+	uint32_t cts_state;
 
 	/* RX specific attributes */
 	struct mdm_receiver_context mdm_ctx;
@@ -446,14 +428,14 @@ struct hl7800_iface_ctx {
 	char mdm_sn[MDM_HL7800_SERIAL_NUMBER_SIZE];
 	char mdm_network_status[MDM_NETWORK_STATUS_LENGTH];
 	char mdm_iccid[MDM_HL7800_ICCID_SIZE];
-	u8_t mdm_startup_state;
+	uint8_t mdm_startup_state;
 	enum mdm_hl7800_radio_mode mdm_rat;
 	char mdm_active_bands_string[MDM_HL7800_LTE_BAND_STR_SIZE];
 	char mdm_bands_string[MDM_HL7800_LTE_BAND_STR_SIZE];
-	u16_t mdm_bands_top;
-	u32_t mdm_bands_middle;
-	u32_t mdm_bands_bottom;
-	s32_t mdm_sinr;
+	uint16_t mdm_bands_top;
+	uint32_t mdm_bands_middle;
+	uint32_t mdm_bands_bottom;
+	int32_t mdm_sinr;
 	bool mdm_echo_is_on;
 	struct mdm_hl7800_apn mdm_apn;
 	bool mdm_startup_reporting_on;
@@ -467,7 +449,7 @@ struct hl7800_iface_ctx {
 	void (*event_callback)(enum mdm_hl7800_event event, void *event_data);
 #ifdef CONFIG_NEWLIB_LIBC
 	struct tm local_time;
-	s32_t local_time_offset;
+	int32_t local_time_offset;
 #endif
 	bool local_time_valid;
 	bool configured;
@@ -475,8 +457,8 @@ struct hl7800_iface_ctx {
 
 struct cmd_handler {
 	const char *cmd;
-	u16_t cmd_len;
-	bool (*func)(struct net_buf **buf, u16_t len);
+	uint16_t cmd_len;
+	bool (*func)(struct net_buf **buf, uint16_t len);
 };
 
 static struct hl7800_iface_ctx ictx;
@@ -497,21 +479,21 @@ static void mdm_reset_work_callback(struct k_work *item);
 static int write_apn(char *access_point_name);
 
 #ifdef CONFIG_NEWLIB_LIBC
-static bool convert_time_string_to_struct(struct tm *tm, s32_t *offset,
+static bool convert_time_string_to_struct(struct tm *tm, int32_t *offset,
 					  char *time_string);
 #endif
 
 #ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
 static bool is_cmd_ready()
 {
-	gpio_pin_read(ictx.gpio_port_dev[MDM_VGPIO], pinconfig[MDM_VGPIO].pin,
-		      &ictx.vgpio_state);
+	ictx.vgpio_state = (uint32_t)gpio_pin_get(ictx.gpio_port_dev[MDM_VGPIO],
+						  pinconfig[MDM_VGPIO].pin);
 
-	gpio_pin_read(ictx.gpio_port_dev[MDM_GPIO6], pinconfig[MDM_GPIO6].pin,
-		      &ictx.gpio6_state);
+	ictx.gpio6_state = (uint32_t)gpio_pin_get(ictx.gpio_port_dev[MDM_GPIO6],
+						  pinconfig[MDM_GPIO6].pin);
 
-	gpio_pin_read(ictx.gpio_port_dev[MDM_UART_CTS],
-		      pinconfig[MDM_UART_CTS].pin, &ictx.cts_state);
+	ictx.cts_state = (uint32_t)gpio_pin_get(
+		ictx.gpio_port_dev[MDM_UART_CTS], pinconfig[MDM_UART_CTS].pin);
 
 	return ictx.vgpio_state && ictx.gpio6_state && !ictx.cts_state;
 }
@@ -697,12 +679,12 @@ static void modem_assert_wake(bool assert)
 {
 	if (assert) {
 		Z_LOG(HL7800_IO_LOG_LEVEL, "MDM_WAKE_PIN -> ASSERTED");
-		gpio_pin_write(ictx.gpio_port_dev[MDM_WAKE],
-			       pinconfig[MDM_WAKE].pin, MDM_WAKE_ASSERTED);
+		gpio_pin_set(ictx.gpio_port_dev[MDM_WAKE],
+			     pinconfig[MDM_WAKE].pin, MDM_WAKE_ASSERTED);
 	} else {
 		Z_LOG(HL7800_IO_LOG_LEVEL, "MDM_WAKE_PIN -> NOT_ASSERTED");
-		gpio_pin_write(ictx.gpio_port_dev[MDM_WAKE],
-			       pinconfig[MDM_WAKE].pin, MDM_WAKE_NOT_ASSERTED);
+		gpio_pin_set(ictx.gpio_port_dev[MDM_WAKE],
+			     pinconfig[MDM_WAKE].pin, MDM_WAKE_NOT_ASSERTED);
 	}
 }
 
@@ -710,13 +692,13 @@ static void modem_assert_pwr_on(bool assert)
 {
 	if (assert) {
 		Z_LOG(HL7800_IO_LOG_LEVEL, "MDM_PWR_ON -> ASSERTED");
-		gpio_pin_write(ictx.gpio_port_dev[MDM_PWR_ON],
-			       pinconfig[MDM_PWR_ON].pin, MDM_PWR_ON_ASSERTED);
+		gpio_pin_set(ictx.gpio_port_dev[MDM_PWR_ON],
+			     pinconfig[MDM_PWR_ON].pin, MDM_PWR_ON_ASSERTED);
 	} else {
 		Z_LOG(HL7800_IO_LOG_LEVEL, "MDM_PWR_ON -> NOT_ASSERTED");
-		gpio_pin_write(ictx.gpio_port_dev[MDM_PWR_ON],
-			       pinconfig[MDM_PWR_ON].pin,
-			       MDM_PWR_ON_NOT_ASSERTED);
+		gpio_pin_set(ictx.gpio_port_dev[MDM_PWR_ON],
+			     pinconfig[MDM_PWR_ON].pin,
+			     MDM_PWR_ON_NOT_ASSERTED);
 	}
 }
 
@@ -724,14 +706,14 @@ static void modem_assert_fast_shutd(bool assert)
 {
 	if (assert) {
 		Z_LOG(HL7800_IO_LOG_LEVEL, "MDM_FAST_SHUTD -> ASSERTED");
-		gpio_pin_write(ictx.gpio_port_dev[MDM_FAST_SHUTD],
-			       pinconfig[MDM_FAST_SHUTD].pin,
-			       MDM_FAST_SHUTD_ASSERTED);
+		gpio_pin_set(ictx.gpio_port_dev[MDM_FAST_SHUTD],
+			     pinconfig[MDM_FAST_SHUTD].pin,
+			     MDM_FAST_SHUTD_ASSERTED);
 	} else {
 		Z_LOG(HL7800_IO_LOG_LEVEL, "MDM_FAST_SHUTD -> NOT_ASSERTED");
-		gpio_pin_write(ictx.gpio_port_dev[MDM_FAST_SHUTD],
-			       pinconfig[MDM_FAST_SHUTD].pin,
-			       MDM_FAST_SHUTD_NOT_ASSERTED);
+		gpio_pin_set(ictx.gpio_port_dev[MDM_FAST_SHUTD],
+			     pinconfig[MDM_FAST_SHUTD].pin,
+			     MDM_FAST_SHUTD_NOT_ASSERTED);
 	}
 }
 
@@ -739,14 +721,14 @@ static void modem_assert_uart_dtr(bool assert)
 {
 	if (assert) {
 		Z_LOG(HL7800_IO_LOG_LEVEL, "MDM_UART_DTR -> ASSERTED");
-		gpio_pin_write(ictx.gpio_port_dev[MDM_UART_DTR],
-			       pinconfig[MDM_UART_DTR].pin,
-			       MDM_UART_DTR_ASSERTED);
+		gpio_pin_set(ictx.gpio_port_dev[MDM_UART_DTR],
+			     pinconfig[MDM_UART_DTR].pin,
+			     MDM_UART_DTR_ASSERTED);
 	} else {
 		Z_LOG(HL7800_IO_LOG_LEVEL, "MDM_UART_DTR -> NOT_ASSERTED");
-		gpio_pin_write(ictx.gpio_port_dev[MDM_UART_DTR],
-			       pinconfig[MDM_UART_DTR].pin,
-			       MDM_UART_DTR_NOT_ASSERTED);
+		gpio_pin_set(ictx.gpio_port_dev[MDM_UART_DTR],
+			     pinconfig[MDM_UART_DTR].pin,
+			     MDM_UART_DTR_NOT_ASSERTED);
 	}
 }
 
@@ -795,8 +777,8 @@ void mdm_hl7800_wakeup(bool wakeup)
 }
 
 /* Send an AT command with a series of response handlers */
-static int send_at_cmd(struct hl7800_socket *sock, const u8_t *data,
-		       int timeout, int retries, bool no_id_resp)
+static int send_at_cmd(struct hl7800_socket *sock, const uint8_t *data,
+		       k_timeout_t timeout, int retries, bool no_id_resp)
 {
 	int ret = 0;
 
@@ -820,7 +802,7 @@ static int send_at_cmd(struct hl7800_socket *sock, const u8_t *data,
 		mdm_receiver_send(&ictx.mdm_ctx, data, strlen(data));
 		mdm_receiver_send(&ictx.mdm_ctx, "\r", 1);
 
-		if (timeout == K_NO_WAIT) {
+		if (K_TIMEOUT_EQ(timeout, K_NO_WAIT)) {
 			goto done;
 		}
 
@@ -862,7 +844,7 @@ static int wakeup_hl7800(void)
 	return 0;
 }
 
-s32_t mdm_hl7800_send_at_cmd(const u8_t *data)
+int32_t mdm_hl7800_send_at_cmd(const uint8_t *data)
 {
 	int ret;
 
@@ -882,7 +864,7 @@ s32_t mdm_hl7800_send_at_cmd(const u8_t *data)
 /* The access point name (and username and password) are stored in the modem's
  * non-volatile memory.
  */
-s32_t mdm_hl7800_update_apn(char *access_point_name)
+int32_t mdm_hl7800_update_apn(char *access_point_name)
 {
 	int ret = -EINVAL;
 
@@ -903,7 +885,7 @@ s32_t mdm_hl7800_update_apn(char *access_point_name)
 	return ret;
 }
 
-bool mdm_hl7800_valid_rat(u8_t value)
+bool mdm_hl7800_valid_rat(uint8_t value)
 {
 	if ((value == MDM_RAT_CAT_M1) || (value == MDM_RAT_CAT_NB1)) {
 		return true;
@@ -911,7 +893,7 @@ bool mdm_hl7800_valid_rat(u8_t value)
 	return false;
 }
 
-s32_t mdm_hl7800_update_rat(enum mdm_hl7800_radio_mode value)
+int32_t mdm_hl7800_update_rat(enum mdm_hl7800_radio_mode value)
 {
 	int ret = -EINVAL;
 
@@ -952,7 +934,7 @@ error:
 }
 
 #ifdef CONFIG_NEWLIB_LIBC
-s32_t mdm_hl7800_get_local_time(struct tm *tm, s32_t *offset)
+int32_t mdm_hl7800_get_local_time(struct tm *tm, int32_t *offset)
 {
 	int ret;
 
@@ -1077,7 +1059,7 @@ done:
 
 /*** NET_BUF HELPERS ***/
 
-static bool is_crlf(u8_t c)
+static bool is_crlf(uint8_t c)
 {
 	if (c == '\n' || c == '\r') {
 		return true;
@@ -1097,9 +1079,9 @@ static void net_buf_skipcrlf(struct net_buf **buf)
 	}
 }
 
-static u16_t net_buf_findcrlf(struct net_buf *buf, struct net_buf **frag)
+static uint16_t net_buf_findcrlf(struct net_buf *buf, struct net_buf **frag)
 {
-	u16_t len = 0U, pos = 0U;
+	uint16_t len = 0U, pos = 0U;
 
 	while (buf && !is_crlf(*(buf->data + pos))) {
 		if (pos + 1 >= buf->len) {
@@ -1120,19 +1102,19 @@ static u16_t net_buf_findcrlf(struct net_buf *buf, struct net_buf **frag)
 	return 0;
 }
 
-static u8_t net_buf_get_u8(struct net_buf **buf)
+static uint8_t net_buf_get_u8(struct net_buf **buf)
 {
-	u8_t val = net_buf_pull_u8(*buf);
+	uint8_t val = net_buf_pull_u8(*buf);
 	if (!(*buf)->len) {
 		*buf = net_buf_frag_del(NULL, *buf);
 	}
 	return val;
 }
 
-static u32_t net_buf_remove(struct net_buf **buf, u32_t len)
+static uint32_t net_buf_remove(struct net_buf **buf, uint32_t len)
 {
-	u32_t toRemove;
-	u32_t removed = 0;
+	uint32_t toRemove;
+	uint32_t removed = 0;
 
 	while (*buf && len > 0) {
 		toRemove = (*buf)->len;
@@ -1159,7 +1141,7 @@ static u32_t net_buf_remove(struct net_buf **buf, u32_t len)
 static int pkt_setup_ip_data(struct net_pkt *pkt, struct hl7800_socket *sock)
 {
 	int hdr_len = 0;
-	u16_t src_port = 0U, dst_port = 0U;
+	uint16_t src_port = 0U, dst_port = 0U;
 
 #if defined(CONFIG_NET_IPV6)
 	if (net_pkt_family(pkt) == AF_INET6) {
@@ -1227,10 +1209,10 @@ static int pkt_setup_ip_data(struct net_pkt *pkt, struct hl7800_socket *sock)
 
 /*** MODEM RESPONSE HANDLERS ***/
 
-static u32_t wait_for_modem_data(struct net_buf **buf, u32_t currentLen,
-				 u32_t expectedLen)
+static uint32_t wait_for_modem_data(struct net_buf **buf, uint32_t currentLen,
+				    uint32_t expectedLen)
 {
-	u32_t waitForDataTries = 0;
+	uint32_t waitForDataTries = 0;
 	while ((currentLen < expectedLen) &&
 	       (waitForDataTries < MDM_WAIT_FOR_DATA_RETRIES)) {
 		LOG_DBG("cur:%d, exp:%d", currentLen, expectedLen);
@@ -1243,15 +1225,15 @@ static u32_t wait_for_modem_data(struct net_buf **buf, u32_t currentLen,
 }
 
 static uint32_t wait_for_modem_data_and_newline(struct net_buf **buf,
-						u32_t currentLen,
-						u32_t expectedLen)
+						uint32_t currentLen,
+						uint32_t expectedLen)
 {
 	return wait_for_modem_data(buf, currentLen,
 				   (expectedLen + strlen("\r\n")));
 }
 
 /* Handler: AT+CGMI */
-static bool on_cmd_atcmdinfo_manufacturer(struct net_buf **buf, u16_t len)
+static bool on_cmd_atcmdinfo_manufacturer(struct net_buf **buf, uint16_t len)
 {
 	struct net_buf *frag = NULL;
 	size_t out_len;
@@ -1280,13 +1262,13 @@ static bool on_cmd_atcmdinfo_manufacturer(struct net_buf **buf, u16_t len)
 				    sizeof(ictx.mdm_manufacturer) - 1, *buf, 0,
 				    len);
 	ictx.mdm_manufacturer[out_len] = 0;
-	LOG_INF("Manufacturer: %s", ictx.mdm_manufacturer);
+	LOG_INF("Manufacturer: %s", log_strdup(ictx.mdm_manufacturer));
 done:
 	return true;
 }
 
 /* Handler: AT+CGMM */
-static bool on_cmd_atcmdinfo_model(struct net_buf **buf, u16_t len)
+static bool on_cmd_atcmdinfo_model(struct net_buf **buf, uint16_t len)
 {
 	struct net_buf *frag = NULL;
 	size_t out_len;
@@ -1314,13 +1296,13 @@ static bool on_cmd_atcmdinfo_model(struct net_buf **buf, u16_t len)
 	out_len = net_buf_linearize(ictx.mdm_model, sizeof(ictx.mdm_model) - 1,
 				    *buf, 0, len);
 	ictx.mdm_model[out_len] = 0;
-	LOG_INF("Model: %s", ictx.mdm_model);
+	LOG_INF("Model: %s", log_strdup(ictx.mdm_model));
 done:
 	return true;
 }
 
 /* Handler: AT+CGMR */
-static bool on_cmd_atcmdinfo_revision(struct net_buf **buf, u16_t len)
+static bool on_cmd_atcmdinfo_revision(struct net_buf **buf, uint16_t len)
 {
 	struct net_buf *frag = NULL;
 	size_t out_len;
@@ -1347,13 +1329,13 @@ static bool on_cmd_atcmdinfo_revision(struct net_buf **buf, u16_t len)
 	out_len = net_buf_linearize(
 		ictx.mdm_revision, sizeof(ictx.mdm_revision) - 1, *buf, 0, len);
 	ictx.mdm_revision[out_len] = 0;
-	LOG_INF("Revision: %s", ictx.mdm_revision);
+	LOG_INF("Revision: %s", log_strdup(ictx.mdm_revision));
 done:
 	return true;
 }
 
 /* Handler: AT+CGSN */
-static bool on_cmd_atcmdinfo_imei(struct net_buf **buf, u16_t len)
+static bool on_cmd_atcmdinfo_imei(struct net_buf **buf, uint16_t len)
 {
 	struct net_buf *frag = NULL;
 	size_t out_len;
@@ -1381,13 +1363,13 @@ static bool on_cmd_atcmdinfo_imei(struct net_buf **buf, u16_t len)
 				    *buf, 0, len);
 	ictx.mdm_imei[out_len] = 0;
 
-	LOG_INF("IMEI: %s", ictx.mdm_imei);
+	LOG_INF("IMEI: %s", log_strdup(ictx.mdm_imei));
 done:
 	return true;
 }
 
 /* Handler: +CCID: <ICCID> */
-static bool on_cmd_atcmdinfo_iccid(struct net_buf **buf, u16_t len)
+static bool on_cmd_atcmdinfo_iccid(struct net_buf **buf, uint16_t len)
 {
 	struct net_buf *frag = NULL;
 	size_t out_len;
@@ -1415,7 +1397,7 @@ static bool on_cmd_atcmdinfo_iccid(struct net_buf **buf, u16_t len)
 				    *buf, 0, len);
 	ictx.mdm_iccid[out_len] = 0;
 
-	LOG_INF("ICCID: %s", ictx.mdm_iccid);
+	LOG_INF("ICCID: %s", log_strdup(ictx.mdm_iccid));
 done:
 	return true;
 }
@@ -1449,7 +1431,7 @@ char *mdm_hl7800_get_sn(void)
 
 /* Handler: +CGCONTRDP: <cid>,<bearer_id>,<apn>,<local_addr and subnet_mask>,
 *			<gw_addr>,<DNS_prim_addr>,<DNS_sec_addr> */
-static bool on_cmd_atcmdinfo_ipaddr(struct net_buf **buf, u16_t len)
+static bool on_cmd_atcmdinfo_ipaddr(struct net_buf **buf, uint16_t len)
 {
 	int ret;
 	int numDelims = 7;
@@ -1555,7 +1537,7 @@ static bool on_cmd_atcmdinfo_ipaddr(struct net_buf **buf, u16_t len)
 		net_ipaddr_copy(&ictx.ipv4Addr, &newIpv4Addr);
 
 		/* start DNS update work */
-		s32_t delay = K_NO_WAIT;
+		k_timeout_t delay = K_NO_WAIT;
 		if (!ictx.initialized) {
 			/* Delay this in case the network
 			*  stack is still starting up */
@@ -1572,7 +1554,7 @@ static bool on_cmd_atcmdinfo_ipaddr(struct net_buf **buf, u16_t len)
 }
 
 /* Handler: +COPS: <mode>[,<format>,<oper>[,<AcT>]] */
-static bool on_cmd_atcmdinfo_operator_status(struct net_buf **buf, u16_t len)
+static bool on_cmd_atcmdinfo_operator_status(struct net_buf **buf, uint16_t len)
 {
 	size_t out_len;
 	char value[len + 1];
@@ -1611,7 +1593,7 @@ done:
 }
 
 /* Handler: +KGSN: T5640400011101 */
-static bool on_cmd_atcmdinfo_serial_number(struct net_buf **buf, u16_t len)
+static bool on_cmd_atcmdinfo_serial_number(struct net_buf **buf, uint16_t len)
 {
 	struct net_buf *frag = NULL;
 	char value[MDM_SN_RESPONSE_LENGTH];
@@ -1655,13 +1637,13 @@ static bool on_cmd_atcmdinfo_serial_number(struct net_buf **buf, u16_t len)
 
 	strncpy(ictx.mdm_sn, valStart, sn_len);
 	ictx.mdm_sn[sn_len] = 0;
-	LOG_INF("Serial #: %s", ictx.mdm_sn);
+	LOG_INF("Serial #: %s", log_strdup(ictx.mdm_sn));
 done:
 	return true;
 }
 
 /* Handler: +KSRAT: # */
-static bool on_cmd_radio_tech_status(struct net_buf **buf, u16_t len)
+static bool on_cmd_radio_tech_status(struct net_buf **buf, uint16_t len)
 {
 	size_t out_len;
 	char value[len + 1];
@@ -1675,7 +1657,7 @@ static bool on_cmd_radio_tech_status(struct net_buf **buf, u16_t len)
 }
 
 /* Handler: +KBNDCFG: #,####################### */
-static bool on_cmd_radio_band_configuration(struct net_buf **buf, u16_t len)
+static bool on_cmd_radio_band_configuration(struct net_buf **buf, uint16_t len)
 {
 	size_t out_len;
 	char value[len + 1];
@@ -1717,7 +1699,7 @@ static bool on_cmd_radio_band_configuration(struct net_buf **buf, u16_t len)
 }
 
 /* Handler: +KBND: #,####################### */
-static bool on_cmd_radio_active_bands(struct net_buf **buf, u16_t len)
+static bool on_cmd_radio_active_bands(struct net_buf **buf, uint16_t len)
 {
 	size_t out_len;
 	char value[len + 1];
@@ -1798,7 +1780,7 @@ static void generate_sleep_state_event(void)
 }
 
 /* Handler: +KSUP: # */
-static bool on_cmd_startup_report(struct net_buf **buf, u16_t len)
+static bool on_cmd_startup_report(struct net_buf **buf, uint16_t len)
 {
 	char value[len + SIZE_OF_NUL];
 	memset(value, 0, sizeof(value));
@@ -1818,21 +1800,21 @@ static bool on_cmd_startup_report(struct net_buf **buf, u16_t len)
 	return true;
 }
 
-static bool profile_handler(struct net_buf **buf, u16_t len,
+static bool profile_handler(struct net_buf **buf, uint16_t len,
 			    bool active_profile)
 {
 	/* Prepare net buffer for this parser. */
 	net_buf_remove(buf, len);
 	net_buf_skipcrlf(buf);
 
-	u32_t size = wait_for_modem_data(buf, net_buf_frags_len(*buf),
-					 sizeof(PROFILE_LINE_1));
+	uint32_t size = wait_for_modem_data(buf, net_buf_frags_len(*buf),
+					    sizeof(PROFILE_LINE_1));
 	net_buf_skipcrlf(buf); /* remove any \r\n that are in the front */
 
 	/* Parse configuration data to determine if echo is on/off. */
 	int echo_state = -1;
 	struct net_buf *frag = NULL;
-	u16_t line_length = net_buf_findcrlf(*buf, &frag);
+	uint16_t line_length = net_buf_findcrlf(*buf, &frag);
 	if (line_length) {
 		char line[MAX_PROFILE_LINE_LENGTH];
 		memset(line, 0, sizeof(line));
@@ -1866,30 +1848,30 @@ static bool profile_handler(struct net_buf **buf, u16_t len,
 	return false;
 }
 
-static bool on_cmd_atcmdinfo_active_profile(struct net_buf **buf, u16_t len)
+static bool on_cmd_atcmdinfo_active_profile(struct net_buf **buf, uint16_t len)
 {
 	return profile_handler(buf, len, true);
 }
 
-static bool on_cmd_atcmdinfo_stored_profile0(struct net_buf **buf, u16_t len)
+static bool on_cmd_atcmdinfo_stored_profile0(struct net_buf **buf, uint16_t len)
 {
 	return profile_handler(buf, len, false);
 }
 
-static bool on_cmd_atcmdinfo_stored_profile1(struct net_buf **buf, u16_t len)
+static bool on_cmd_atcmdinfo_stored_profile1(struct net_buf **buf, uint16_t len)
 {
 	return profile_handler(buf, len, false);
 }
 
 /* +WPPP: 1,1,"username","password" */
 static bool on_cmd_atcmdinfo_pdp_authentication_cfg(struct net_buf **buf,
-						    u16_t len)
+						    uint16_t len)
 {
 	wait_for_modem_data_and_newline(buf, net_buf_frags_len(*buf),
 					MDM_HL7800_APN_CMD_MAX_SIZE);
 
 	struct net_buf *frag = NULL;
-	u16_t line_length = net_buf_findcrlf(*buf, &frag);
+	uint16_t line_length = net_buf_findcrlf(*buf, &frag);
 	if (line_length) {
 		char line[MDM_HL7800_APN_CMD_MAX_SIZE];
 		memset(line, 0, sizeof(line));
@@ -1939,13 +1921,13 @@ static bool on_cmd_atcmdinfo_pdp_authentication_cfg(struct net_buf **buf,
  *
  * +CGDCONT: 1,"IP","access point name",,0,0,0,0,0,,0,,,,,
  */
-static bool on_cmd_atcmdinfo_pdp_context(struct net_buf **buf, u16_t len)
+static bool on_cmd_atcmdinfo_pdp_context(struct net_buf **buf, uint16_t len)
 {
 	wait_for_modem_data_and_newline(buf, net_buf_frags_len(*buf),
 					MDM_HL7800_APN_CMD_MAX_SIZE);
 
 	struct net_buf *frag = NULL;
-	u16_t line_length = net_buf_findcrlf(*buf, &frag);
+	uint16_t line_length = net_buf_findcrlf(*buf, &frag);
 	if (line_length) {
 		char line[MDM_HL7800_APN_CMD_MAX_SIZE];
 		memset(line, 0, sizeof(line));
@@ -1969,7 +1951,7 @@ static bool on_cmd_atcmdinfo_pdp_context(struct net_buf **buf, u16_t len)
 					ictx.mdm_apn.value[i++] = *p++;
 				}
 			}
-			LOG_INF("APN: %s", ictx.mdm_apn.value);
+			LOG_INF("APN: %s", log_strdup(ictx.mdm_apn.value));
 		}
 	}
 	net_buf_remove(buf, line_length);
@@ -2139,7 +2121,7 @@ static void generate_network_state_event(void)
 
 /* Handler: +CEREG: <n>,<stat>[,[<lac>],[<ci>],[<AcT>]
 *  [,[<cause_type>],[<reject_cause>] [,[<Active-Time>],[<Periodic-TAU>]]]] */
-static bool on_cmd_network_report_query(struct net_buf **buf, u16_t len)
+static bool on_cmd_network_report_query(struct net_buf **buf, uint16_t len)
 {
 	size_t out_len;
 	char value[len + 1];
@@ -2165,7 +2147,7 @@ static bool on_cmd_network_report_query(struct net_buf **buf, u16_t len)
 
 #ifdef CONFIG_NEWLIB_LIBC
 /* Handler: +CCLK: "yy/MM/dd,hh:mm:ss±zz" */
-static bool on_cmd_rtc_query(struct net_buf **buf, u16_t len)
+static bool on_cmd_rtc_query(struct net_buf **buf, uint16_t len)
 {
 	struct net_buf *frag = NULL;
 	size_t str_len = strlen(TIME_STRING_FORMAT);
@@ -2233,7 +2215,7 @@ int get_next_time_string_digit(int *failure_cnt, char **pp, int min, int max)
 }
 
 #ifdef CONFIG_NEWLIB_LIBC
-static bool convert_time_string_to_struct(struct tm *tm, s32_t *offset,
+static bool convert_time_string_to_struct(struct tm *tm, int32_t *offset,
 					  char *time_string)
 {
 	int fc = 0;
@@ -2252,8 +2234,8 @@ static bool convert_time_string_to_struct(struct tm *tm, s32_t *offset,
 	tm->tm_min = get_next_time_string_digit(&fc, &ptr, TM_MIN_RANGE);
 	tm->tm_sec = get_next_time_string_digit(&fc, &ptr, TM_SEC_RANGE);
 	tm->tm_isdst = 0;
-	*offset = (s32_t)get_next_time_string_digit(&fc, &ptr,
-						    QUARTER_HOUR_RANGE) *
+	*offset = (int32_t)get_next_time_string_digit(&fc, &ptr,
+						      QUARTER_HOUR_RANGE) *
 		  SECONDS_PER_QUARTER_HOUR;
 	if (time_string[TIME_STRING_PLUS_MINUS_INDEX] == '-') {
 		*offset *= -1;
@@ -2264,7 +2246,7 @@ static bool convert_time_string_to_struct(struct tm *tm, s32_t *offset,
 
 /* Handler: +CEREG: <stat>[,[<lac>],[<ci>],[<AcT>]
 *  [,[<cause_type>],[<reject_cause>] [,[<Active-Time>],[<Periodic-TAU>]]]] */
-static bool on_cmd_network_report(struct net_buf **buf, u16_t len)
+static bool on_cmd_network_report(struct net_buf **buf, uint16_t len)
 {
 	size_t out_len;
 
@@ -2297,7 +2279,7 @@ static bool on_cmd_network_report(struct net_buf **buf, u16_t len)
 /* Handler: +KCELLMEAS: <RSRP>,<Downlink Path Loss>,<PUSCH Tx Power>,
 *                       <PUCCH Tx Power>,<SiNR>
 */
-static bool on_cmd_atcmdinfo_rssi(struct net_buf **buf, u16_t len)
+static bool on_cmd_atcmdinfo_rssi(struct net_buf **buf, uint16_t len)
 {
 	/* number of ',' delimiters in this response */
 	int numDelims = 4;
@@ -2341,7 +2323,7 @@ done:
 }
 
 /* Handle the "OK" response from an AT command or a socket call */
-static bool on_cmd_sockok(struct net_buf **buf, u16_t len)
+static bool on_cmd_sockok(struct net_buf **buf, uint16_t len)
 {
 	struct hl7800_socket *sock = NULL;
 
@@ -2356,7 +2338,7 @@ static bool on_cmd_sockok(struct net_buf **buf, u16_t len)
 }
 
 /* Handler: +KTCP_IND/+KUDP_IND */
-static bool on_cmd_sock_ind(struct net_buf **buf, u16_t len)
+static bool on_cmd_sock_ind(struct net_buf **buf, uint16_t len)
 {
 	struct hl7800_socket *sock = NULL;
 	char *delim;
@@ -2390,7 +2372,7 @@ done:
 }
 
 /* Handler: ERROR */
-static bool on_cmd_sockerror(struct net_buf **buf, u16_t len)
+static bool on_cmd_sockerror(struct net_buf **buf, uint16_t len)
 {
 	if (len > 0) {
 		char string[len + 1];
@@ -2413,7 +2395,7 @@ static bool on_cmd_sockerror(struct net_buf **buf, u16_t len)
 }
 
 /* Handler: CME/CMS Error */
-static bool on_cmd_sock_error_code(struct net_buf **buf, u16_t len)
+static bool on_cmd_sock_error_code(struct net_buf **buf, uint16_t len)
 {
 	struct hl7800_socket *sock = NULL;
 	char value[len + 1];
@@ -2463,13 +2445,13 @@ static void sock_notif_cb_work(struct k_work *work)
 }
 
 /* Handler: +KTCP_NOTIF/+KUDP_NOTIF */
-static bool on_cmd_sock_notif(struct net_buf **buf, u16_t len)
+static bool on_cmd_sock_notif(struct net_buf **buf, uint16_t len)
 {
 	struct hl7800_socket *sock = NULL;
 	char *delim;
 	char value[len + 1];
 	size_t out_len;
-	u8_t notifVal;
+	uint8_t notifVal;
 	bool err = false;
 	bool triggerSem = true;
 	int id;
@@ -2530,7 +2512,7 @@ done:
 }
 
 /* Handler: +KTCPCFG/+KUDPCFG: <session_id> */
-static bool on_cmd_sockcreate(struct net_buf **buf, u16_t len)
+static bool on_cmd_sockcreate(struct net_buf **buf, uint16_t len)
 {
 	size_t out_len;
 	char value[len + 1];
@@ -2582,11 +2564,11 @@ static void sockreadrecv_cb_work(struct k_work *work)
 	}
 }
 
-static void sock_read(struct net_buf **buf, u16_t len)
+static void sock_read(struct net_buf **buf, uint16_t len)
 {
 	struct hl7800_socket *sock = NULL;
 	struct net_buf *frag;
-	u8_t c = 0U;
+	uint8_t c = 0U;
 	int i, hdr_len;
 	char okResp[sizeof(OK_STRING)];
 	char eof[sizeof(EOF_PATTERN)];
@@ -2736,7 +2718,7 @@ done:
 	hl7800_TX_unlock();
 }
 
-static bool on_cmd_connect(struct net_buf **buf, u16_t len)
+static bool on_cmd_connect(struct net_buf **buf, uint16_t len)
 {
 	bool removeDataFromBuffer = true;
 	struct hl7800_socket *sock = NULL;
@@ -2758,7 +2740,7 @@ done:
 	return removeDataFromBuffer;
 }
 
-static int start_socket_rx(struct hl7800_socket *sock, u16_t rxSize)
+static int start_socket_rx(struct hl7800_socket *sock, uint16_t rxSize)
 {
 	char sendbuf[sizeof("AT+KTCPRCV=##,####")];
 
@@ -2833,7 +2815,7 @@ static void sock_rx_data_cb_work(struct k_work *work)
 }
 
 /* Handler: +KTCP_DATA/+KUDP_DATA: <socket_id>,<left_bytes> */
-static bool on_cmd_sockdataind(struct net_buf **buf, u16_t len)
+static bool on_cmd_sockdataind(struct net_buf **buf, uint16_t len)
 {
 	int socket_id, left_bytes, rc;
 	size_t out_len;
@@ -2895,17 +2877,18 @@ done:
 	return true;
 }
 
-static inline struct net_buf *read_rx_allocator(s32_t timeout, void *user_data)
+static inline struct net_buf *read_rx_allocator(k_timeout_t timeout,
+						void *user_data)
 {
 	return net_buf_alloc((struct net_buf_pool *)user_data, timeout);
 }
 
 static size_t hl7800_read_rx(struct net_buf **buf)
 {
-	u8_t uart_buffer[MDM_RECV_BUF_SIZE];
+	uint8_t uart_buffer[MDM_RECV_BUF_SIZE];
 	size_t bytes_read, totalRead;
 	int ret;
-	u16_t rx_len;
+	uint16_t rx_len;
 	bytes_read = 0, totalRead = 0;
 
 	/* read all of the data from mdm_receiver */
@@ -2918,7 +2901,7 @@ static size_t hl7800_read_rx(struct net_buf **buf)
 		}
 
 #if defined(HL7800_ENABLE_VERBOSE_MODEM_RECV_HEXDUMP)
-		LOG_HEXDUMP_DBG((const u8_t *)&uart_buffer, bytes_read,
+		LOG_HEXDUMP_DBG((const uint8_t *)&uart_buffer, bytes_read,
 				"HL7800 RX");
 #endif
 		/* make sure we have storage */
@@ -2951,7 +2934,7 @@ static void hl7800_rx(void)
 	struct net_buf *rx_buf = NULL;
 	struct net_buf *frag = NULL;
 	int i, cmpRes;
-	u16_t len;
+	uint16_t len;
 	size_t out_len;
 	bool cmd_handled = false;
 	static char rx_msg[MDM_HANDLER_MATCH_MAX_LEN];
@@ -3106,7 +3089,7 @@ static void hl7800_rx(void)
 				out_len = net_buf_linearize(msg, sizeof(msg),
 							    rx_buf, 0, len);
 				msg[out_len] = 0;
-				LOG_HEXDUMP_DBG((const u8_t *)&msg, len,
+				LOG_HEXDUMP_DBG((const uint8_t *)&msg, len,
 						"UNHANDLED RX");
 			}
 #endif
@@ -3189,10 +3172,10 @@ static void mdm_vgpio_work_cb(struct k_work *item)
 }
 
 void mdm_vgpio_callback_isr(struct device *port, struct gpio_callback *cb,
-			    u32_t pins)
+			    uint32_t pins)
 {
-	gpio_pin_read(ictx.gpio_port_dev[MDM_VGPIO], pinconfig[MDM_VGPIO].pin,
-		      &ictx.vgpio_state);
+	ictx.vgpio_state = (uint32_t)gpio_pin_get(ictx.gpio_port_dev[MDM_VGPIO],
+						  pinconfig[MDM_VGPIO].pin);
 	Z_LOG(HL7800_IO_LOG_LEVEL, "VGPIO:%d", ictx.vgpio_state);
 
 	if (!ictx.vgpio_state) {
@@ -3217,10 +3200,10 @@ void mdm_vgpio_callback_isr(struct device *port, struct gpio_callback *cb,
 }
 
 void mdm_uart_dsr_callback_isr(struct device *port, struct gpio_callback *cb,
-			       u32_t pins)
+			       uint32_t pins)
 {
-	gpio_pin_read(ictx.gpio_port_dev[MDM_UART_DSR],
-		      pinconfig[MDM_UART_DSR].pin, &ictx.dsr_state);
+	ictx.dsr_state = (uint32_t)gpio_pin_get(
+		ictx.gpio_port_dev[MDM_UART_DSR], pinconfig[MDM_UART_DSR].pin);
 
 	Z_LOG(HL7800_IO_LOG_LEVEL, "MDM_UART_DSR:%d", ictx.dsr_state);
 }
@@ -3242,11 +3225,11 @@ static void mark_sockets_for_reconfig(void)
 #endif
 
 void mdm_gpio6_callback_isr(struct device *port, struct gpio_callback *cb,
-			    u32_t pins)
+			    uint32_t pins)
 {
 #ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
-	gpio_pin_read(ictx.gpio_port_dev[MDM_GPIO6], pinconfig[MDM_GPIO6].pin,
-		      &ictx.gpio6_state);
+	ictx.gpio6_state = (uint32_t)gpio_pin_get(ictx.gpio_port_dev[MDM_GPIO6],
+						  pinconfig[MDM_GPIO6].pin);
 	Z_LOG(HL7800_IO_LOG_LEVEL, "MDM_GPIO6:%d", ictx.gpio6_state);
 
 	if (!ictx.gpio6_state) {
@@ -3268,10 +3251,10 @@ void mdm_gpio6_callback_isr(struct device *port, struct gpio_callback *cb,
 }
 
 void mdm_uart_cts_callback(struct device *port, struct gpio_callback *cb,
-			   u32_t pins)
+			   uint32_t pins)
 {
-	gpio_pin_read(ictx.gpio_port_dev[MDM_UART_CTS],
-		      pinconfig[MDM_UART_CTS].pin, &ictx.cts_state);
+	ictx.cts_state = (uint32_t)gpio_pin_get(
+		ictx.gpio_port_dev[MDM_UART_CTS], pinconfig[MDM_UART_CTS].pin);
 	/* CTS toggles A LOT,
 	 * comment out the debug print unless we really need it.
 	 */
@@ -3285,8 +3268,8 @@ static void modem_reset(void)
 
 	LOG_INF("Modem Reset");
 	/* Hard reset the modem */
-	gpio_pin_write(ictx.gpio_port_dev[MDM_RESET], pinconfig[MDM_RESET].pin,
-		       MDM_RESET_ASSERTED);
+	gpio_pin_set(ictx.gpio_port_dev[MDM_RESET], pinconfig[MDM_RESET].pin,
+		     MDM_RESET_ASSERTED);
 	/* >20 milliseconds required for reset low */
 	k_sleep(MDM_RESET_LOW_TIME);
 
@@ -3301,8 +3284,8 @@ static void modem_reset(void)
 static void modem_run(void)
 {
 	LOG_INF("Modem Run");
-	gpio_pin_write(ictx.gpio_port_dev[MDM_RESET], pinconfig[MDM_RESET].pin,
-		       MDM_RESET_NOT_ASSERTED);
+	gpio_pin_set(ictx.gpio_port_dev[MDM_RESET], pinconfig[MDM_RESET].pin,
+		     MDM_RESET_NOT_ASSERTED);
 	k_sleep(MDM_RESET_HIGH_TIME);
 	allow_sleep(false);
 }
@@ -3419,8 +3402,8 @@ reboot:
 
 	/* Configure LTE bands */
 #if CONFIG_MODEM_HL7800_CONFIGURE_BANDS
-	u16_t bands_top = 0;
-	u32_t bands_middle = 0, bands_bottom = 0;
+	uint16_t bands_top = 0;
+	uint32_t bands_middle = 0, bands_bottom = 0;
 
 #if CONFIG_MODEM_HL7800_BAND_1
 	bands_bottom |= 1 << 0;
@@ -3650,7 +3633,7 @@ static void mdm_reset_work_callback(struct k_work *item)
 	mdm_hl7800_reset();
 }
 
-s32_t mdm_hl7800_reset(void)
+int32_t mdm_hl7800_reset(void)
 {
 	int ret;
 
@@ -3686,7 +3669,7 @@ static int hl7800_power_off(void)
 	return ret;
 }
 
-s32_t mdm_hl7800_power_off(void)
+int32_t mdm_hl7800_power_off(void)
 {
 	int rc;
 
@@ -3971,7 +3954,7 @@ static int offload_listen(struct net_context *context, int backlog)
 
 static int offload_connect(struct net_context *context,
 			   const struct sockaddr *addr, socklen_t addrlen,
-			   net_context_connect_cb_t cb, s32_t timeout,
+			   net_context_connect_cb_t cb, int32_t timeout,
 			   void *user_data)
 {
 	int ret = 0;
@@ -4055,7 +4038,7 @@ done:
 }
 
 static int offload_accept(struct net_context *context, net_tcp_accept_cb_t cb,
-			  s32_t timeout, void *user_data)
+			  int32_t timeout, void *user_data)
 {
 	/* NOT IMPLEMENTED */
 	return -ENOTSUP;
@@ -4063,7 +4046,7 @@ static int offload_accept(struct net_context *context, net_tcp_accept_cb_t cb,
 
 static int offload_sendto(struct net_pkt *pkt, const struct sockaddr *dst_addr,
 			  socklen_t addrlen, net_context_send_cb_t cb,
-			  s32_t timeout, void *user_data)
+			  int32_t timeout, void *user_data)
 {
 	struct net_context *context = net_pkt_context(pkt);
 	struct hl7800_socket *sock;
@@ -4122,7 +4105,7 @@ static int offload_sendto(struct net_pkt *pkt, const struct sockaddr *dst_addr,
 }
 
 static int offload_send(struct net_pkt *pkt, net_context_send_cb_t cb,
-			s32_t timeout, void *user_data)
+			int32_t timeout, void *user_data)
 {
 	struct net_context *context = net_pkt_context(pkt);
 	socklen_t addrlen;
@@ -4147,7 +4130,7 @@ static int offload_send(struct net_pkt *pkt, net_context_send_cb_t cb,
 }
 
 static int offload_recv(struct net_context *context, net_context_recv_cb_t cb,
-			s32_t timeout, void *user_data)
+			int32_t timeout, void *user_data)
 {
 	struct hl7800_socket *sock;
 
@@ -4255,7 +4238,7 @@ static struct net_offload offload_funcs = {
 	.put = offload_put,
 };
 
-static inline u8_t *hl7800_get_mac(struct device *dev)
+static inline uint8_t *hl7800_get_mac(struct device *dev)
 {
 	struct hl7800_iface_ctx *ctx = dev->driver_data;
 
@@ -4264,7 +4247,7 @@ static inline u8_t *hl7800_get_mac(struct device *dev)
 	ctx->mac_addr[1] = 0x10;
 
 	UNALIGNED_PUT(sys_cpu_to_be32(sys_rand32_get()),
-		      (u32_t *)(ctx->mac_addr + 2));
+		      (uint32_t *)(ctx->mac_addr + 2));
 
 	return ctx->mac_addr;
 }
@@ -4285,7 +4268,9 @@ static int hl7800_init(struct device *dev)
 	 * because the modem may not have a valid SIM card.
 	 */
 	ictx.iface = net_if_get_default();
-	NET_ASSERT_INFO((ictx.iface != NULL), "Invalid iface");
+	if (ictx.iface == NULL) {
+		return -EIO;
+	}
 	net_if_flag_set(ictx.iface, NET_IF_NO_AUTO_START);
 
 	(void)memset(&ictx, 0, sizeof(ictx));
@@ -4360,10 +4345,11 @@ static int hl7800_init(struct device *dev)
 		LOG_ERR("Cannot setup vgpio callback! (%d)", ret);
 		return ret;
 	}
-	ret = gpio_pin_enable_callback(ictx.gpio_port_dev[MDM_VGPIO],
-				       pinconfig[MDM_VGPIO].pin);
+	ret = gpio_pin_interrupt_configure(ictx.gpio_port_dev[MDM_VGPIO],
+					   pinconfig[MDM_VGPIO].pin,
+					   pinconfig[MDM_VGPIO].config);
 	if (ret) {
-		LOG_ERR("Error enabling vgpio callback! (%d)", ret);
+		LOG_ERR("Error config vgpio interrupt! (%d)", ret);
 		return ret;
 	}
 
@@ -4376,10 +4362,11 @@ static int hl7800_init(struct device *dev)
 		LOG_ERR("Cannot setup uart dsr callback! (%d)", ret);
 		return ret;
 	}
-	ret = gpio_pin_enable_callback(ictx.gpio_port_dev[MDM_UART_DSR],
-				       pinconfig[MDM_UART_DSR].pin);
+	ret = gpio_pin_interrupt_configure(ictx.gpio_port_dev[MDM_UART_DSR],
+					   pinconfig[MDM_UART_DSR].pin,
+					   pinconfig[MDM_UART_DSR].config);
 	if (ret) {
-		LOG_ERR("Error enabling uart dsr callback! (%d)", ret);
+		LOG_ERR("Error config uart dsr interrupt! (%d)", ret);
 		return ret;
 	}
 
@@ -4392,10 +4379,11 @@ static int hl7800_init(struct device *dev)
 		LOG_ERR("Cannot setup gpio6 callback! (%d)", ret);
 		return ret;
 	}
-	ret = gpio_pin_enable_callback(ictx.gpio_port_dev[MDM_GPIO6],
-				       pinconfig[MDM_GPIO6].pin);
+	ret = gpio_pin_interrupt_configure(ictx.gpio_port_dev[MDM_GPIO6],
+					   pinconfig[MDM_GPIO6].pin,
+					   pinconfig[MDM_GPIO6].config);
 	if (ret) {
-		LOG_ERR("Error enabling gpio6 callback! (%d)", ret);
+		LOG_ERR("Error config gpio6 interrupt! (%d)", ret);
 		return ret;
 	}
 
@@ -4408,10 +4396,11 @@ static int hl7800_init(struct device *dev)
 		LOG_ERR("Cannot setup uart cts callback! (%d)", ret);
 		return ret;
 	}
-	ret = gpio_pin_enable_callback(ictx.gpio_port_dev[MDM_UART_CTS],
-				       pinconfig[MDM_UART_CTS].pin);
+	ret = gpio_pin_interrupt_configure(ictx.gpio_port_dev[MDM_UART_CTS],
+					   pinconfig[MDM_UART_CTS].pin,
+					   pinconfig[MDM_UART_CTS].config);
 	if (ret) {
-		LOG_ERR("Error enabling uart cts callback! (%d)", ret);
+		LOG_ERR("Error config uart cts interrupt! (%d)", ret);
 		return ret;
 	}
 
@@ -4457,5 +4446,6 @@ static struct net_if_api api_funcs = {
 	.init = offload_iface_init,
 };
 
-NET_DEVICE_OFFLOAD_INIT(modem_hl7800, "MODEM_HL7800", hl7800_init, &ictx, NULL,
+NET_DEVICE_OFFLOAD_INIT(modem_hl7800, "MODEM_HL7800", hl7800_init,
+			device_pm_control_nop, &ictx, NULL,
 			CONFIG_MODEM_HL7800_INIT_PRIORITY, &api_funcs, MDM_MTU);

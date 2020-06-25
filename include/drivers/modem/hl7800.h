@@ -102,23 +102,23 @@ enum mdm_hl7800_sleep_state {
 
 /* The modem reports state values as an enumeration and a string */
 struct mdm_hl7800_compound_event {
-	u8_t code;
+	uint8_t code;
 	char *string;
 };
 
 /**
  * @brief Power off the HL7800
  *
- * @return s32_t 0 for success
+ * @return int32_t 0 for success
  */
-s32_t mdm_hl7800_power_off(void);
+int32_t mdm_hl7800_power_off(void);
 
 /**
  * @brief Reset the HL7800
  *
- * @return s32_t 0 for success
+ * @return int32_t 0 for success
  */
-s32_t mdm_hl7800_reset(void);
+int32_t mdm_hl7800_reset(void);
 
 /**
  * @brief Control the wake signals to the HL7800
@@ -131,9 +131,9 @@ void mdm_hl7800_wakeup(bool awake);
  * @brief Send an AT command to the HL7800
  *
  * @param data AT command string
- * @return s32_t 0 for success
+ * @return int32_t 0 for success
  */
-s32_t mdm_hl7800_send_at_cmd(const u8_t *data);
+int32_t mdm_hl7800_send_at_cmd(const uint8_t *data);
 
 /**
  * @brief Get the signal quality of the HL7800
@@ -162,19 +162,19 @@ char *mdm_hl7800_get_sn(void);
  *
  * @retval 0 on success, negative on failure.
  */
-s32_t mdm_hl7800_update_apn(char *access_point_name);
+int32_t mdm_hl7800_update_apn(char *access_point_name);
 
 /**
  * @brief Update the Radio Access Technology (mode).
  *
  * @retval 0 on success, negative on failure.
  */
-s32_t mdm_hl7800_update_rat(enum mdm_hl7800_radio_mode value);
+int32_t mdm_hl7800_update_rat(enum mdm_hl7800_radio_mode value);
 
 /**
  * @retval true if RAT value is valid
  */
-bool mdm_hl7800_valid_rat(u8_t value);
+bool mdm_hl7800_valid_rat(uint8_t value);
 
 /**
  * @brief Register a function that is called when a modem event occurs.
@@ -209,7 +209,7 @@ void mdm_hl7800_generate_status_events(void);
  *
  * @param 0 if successful
  */
-s32_t mdm_hl7800_get_local_time(struct tm *tm, s32_t *offset);
+int32_t mdm_hl7800_get_local_time(struct tm *tm, int32_t *offset);
 #endif
 
 #ifdef __cplusplus
