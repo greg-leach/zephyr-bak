@@ -158,6 +158,18 @@ char *mdm_hl7800_get_iccid(void);
 char *mdm_hl7800_get_sn(void);
 
 /**
+ * @brief Get the HL7800 IMEI
+ *
+ */
+char *mdm_hl7800_get_imei(void);
+
+/**
+ * @brief Get the HL7800 firmware version
+ *
+ */
+char *mdm_hl7800_get_fw_version(void);
+
+/**
  * @brief Update the Access Point Name in the modem.
  *
  * @retval 0 on success, negative on failure.
