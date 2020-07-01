@@ -1906,7 +1906,8 @@ static bool on_cmd_atcmdinfo_pdp_authentication_cfg(struct net_buf **buf,
 					ictx.mdm_apn.username[i++] = *p++;
 				}
 			}
-			LOG_INF("APN Username: %s", ictx.mdm_apn.username);
+			LOG_INF("APN Username: %s",
+				log_strdup(ictx.mdm_apn.username));
 
 			p = strchr(p + 1, '"');
 			if (p != NULL) {
@@ -1918,7 +1919,8 @@ static bool on_cmd_atcmdinfo_pdp_authentication_cfg(struct net_buf **buf,
 					ictx.mdm_apn.password[i++] = *p++;
 				}
 			}
-			LOG_INF("APN Password: %s", ictx.mdm_apn.password);
+			LOG_INF("APN Password: %s",
+				log_strdup(ictx.mdm_apn.password));
 		}
 	}
 	net_buf_remove(buf, line_length);
