@@ -39,6 +39,10 @@ LOG_MODULE_REGISTER(LOG_DOMAIN);
 #include "udp_internal.h"
 #endif
 
+#ifdef CONFIG_MODEM_HL7800_FW_UPDATE
+#include <fs/fs.h>
+#endif
+
 #include "modem_receiver.h"
 #include <drivers/modem/hl7800.h>
 
@@ -136,6 +140,37 @@ enum mdm_control_pins {
 };
 
 enum net_operator_status { NO_OPERATOR, REGISTERED };
+
+enum device_service_indications {
+	WDSI_PKG_DOWNLOADED = 3,
+};
+
+#ifdef CONFIG_MODEM_HL7800_FW_UPDATE
+enum firmware_update_state { FW_UP_NA, FW_UP_START, FW_UP_WIP, FW_UP_FINISH };
+
+enum XMODEM_CONTROL_CHARACTERS {
+	XM_SOH = 0x01,
+	XM_SOH_1K = 0x02,
+	XM_EOT = 0x04,
+	XM_ACK = 0x06, /* 'R' */
+	XM_NACK = 0x15, /* 'N' */
+	XM_ETB = 0x17,
+	XM_CAN = 0x18,
+	XM_C = 0x43
+};
+
+#define XMODEM_DATA_SIZE 1024
+#define XMODEM_PACKET_SIZE (XMODEM_DATA_SIZE + 4)
+#define XMODEM_PAD_VALUE 26
+
+struct xmodem_packet {
+	uint8_t preamble;
+	uint8_t id;
+	uint8_t id_complement;
+	uint8_t data[XMODEM_DATA_SIZE];
+	uint8_t crc;
+};
+#endif
 
 static const struct mdm_control_pinconfig pinconfig[] = {
 	/* MDM_RESET */
@@ -419,6 +454,17 @@ struct hl7800_iface_ctx {
 	struct k_delayed_work mdm_reset_work;
 	struct k_delayed_work allow_sleep_work;
 
+#ifdef CONFIG_MODEM_HL7800_FW_UPDATE
+	/* firmware update */
+	enum firmware_update_state fw_update_state;
+	struct fs_file_t fw_update_file;
+	struct xmodem_packet fw_packet;
+	int fw_packet_count;
+	int file_pos;
+	struct k_work finish_fw_update_work;
+	bool fw_updated;
+#endif
+
 	/* modem info */
 	/* NOTE: make sure length is +1 for null char */
 	char mdm_manufacturer[MDM_MANUFACTURER_LENGTH];
@@ -439,6 +485,7 @@ struct hl7800_iface_ctx {
 	bool mdm_echo_is_on;
 	struct mdm_hl7800_apn mdm_apn;
 	bool mdm_startup_reporting_on;
+	int device_services_ind;
 
 	/* modem state */
 	bool allowSleep;
@@ -1802,11 +1849,24 @@ static bool on_cmd_startup_report(struct net_buf **buf, uint16_t len)
 		set_startup_state(HL7800_STARTUP_STATE_UNKNOWN);
 	}
 
-	PRINT_AWAKE_MSG;
-	ictx.wait_for_KSUP = false;
-	ictx.mdm_startup_reporting_on = true;
-	set_sleep_state(HL7800_SLEEP_STATE_AWAKE);
-	k_sem_give(&ictx.mdm_awake);
+#ifdef CONFIG_MODEM_HL7800_FW_UPDATE
+	if (ictx.fw_updated) {
+		ictx.fw_updated = false;
+		LOG_INF("FW update finished! Reset and reconfigure.");
+
+		/* issue reset after a firmware update to reconfigure modem state */
+		k_delayed_work_submit_to_queue(&hl7800_workq,
+					       &ictx.mdm_reset_work, K_NO_WAIT);
+	} else
+#endif
+	{
+		PRINT_AWAKE_MSG;
+		ictx.wait_for_KSUP = false;
+		ictx.mdm_startup_reporting_on = true;
+		set_sleep_state(HL7800_SLEEP_STATE_AWAKE);
+		k_sem_give(&ictx.mdm_awake);
+	}
+
 	return true;
 }
 
@@ -2889,6 +2949,28 @@ done:
 	return true;
 }
 
+/* Handler: +WDSI: ## */
+static bool on_cmd_device_service_ind(struct net_buf **buf, uint16_t len)
+{
+	char value[len + SIZE_OF_NUL];
+	memset(value, 0, sizeof(value));
+	size_t out_len =
+		net_buf_linearize(value, SIZE_WITHOUT_NUL(value), *buf, 0, len);
+	if (out_len > 0) {
+		ictx.device_services_ind = strtol(value, NULL, 10);
+	}
+	LOG_INF("+WDSI: %d", ictx.device_services_ind);
+
+#ifdef CONFIG_MODEM_HL7800_FW_UPDATE
+	if (ictx.device_services_ind == WDSI_PKG_DOWNLOADED) {
+		k_work_submit_to_queue(&hl7800_workq,
+				       &ictx.finish_fw_update_work);
+	}
+#endif
+
+	return true;
+}
+
 static inline struct net_buf *read_rx_allocator(k_timeout_t timeout,
 						void *user_data)
 {
@@ -2939,6 +3021,125 @@ static size_t hl7800_read_rx(struct net_buf **buf)
 
 	return totalRead;
 }
+
+#ifdef CONFIG_MODEM_HL7800_FW_UPDATE
+static void finish_fw_update_work_callback(struct k_work *item)
+{
+	ARG_UNUSED(item);
+
+	send_at_cmd(NULL, "AT+WDSR=4", MDM_CMD_SEND_TIMEOUT, 0, false);
+	ictx.fw_updated = true;
+	LOG_INF("FW transfer finished.  Waiting for reset");
+	hl7800_unlock();
+}
+
+static uint8_t calc_fw_update_crc(uint8_t *ptr, int count)
+{
+	uint8_t crc = 0;
+	unsigned char l;
+	uint16_t i = 0;
+
+	while (i < count) {
+		l = *ptr;
+		crc += l;
+		++ptr;
+		++i;
+	}
+
+	return crc;
+}
+
+static int send_fw_update_packet(struct xmodem_packet *pkt)
+{
+	int ret = 0;
+
+	/* TODO: generate event to let user app track progress */
+	LOG_DBG("Send FW update packet %d,%d", pkt->id, ictx.fw_packet_count);
+	ret = mdm_receiver_send(&ictx.mdm_ctx, (const uint8_t *)pkt,
+				XMODEM_PACKET_SIZE);
+
+	return ret;
+}
+
+static int prepare_and_send_fw_packet(void)
+{
+	int ret = 0;
+	int read_res;
+
+	ictx.fw_packet.id_complement = 0xFF - ictx.fw_packet.id;
+
+	ret = fs_seek(&ictx.fw_update_file, ictx.file_pos, FS_SEEK_SET);
+	if (ret < 0) {
+		LOG_ERR("Could not seek to offset %d of file", ictx.file_pos);
+		return ret;
+	}
+
+	read_res = fs_read(&ictx.fw_update_file, ictx.fw_packet.data,
+			   XMODEM_DATA_SIZE);
+	if (read_res < 0) {
+		LOG_ERR("Failed to read fw update file [%d]", read_res);
+		return ret;
+	} else if (read_res < XMODEM_DATA_SIZE) {
+		ictx.fw_update_state = FW_UP_FINISH;
+		fs_close(&ictx.fw_update_file);
+		/* pad rest of data */
+		for (int i = read_res; i < XMODEM_DATA_SIZE; i++) {
+			ictx.fw_packet.data[i] = XMODEM_PAD_VALUE;
+		}
+	}
+
+	ictx.fw_packet.crc =
+		calc_fw_update_crc(ictx.fw_packet.data, XMODEM_DATA_SIZE);
+
+	send_fw_update_packet(&ictx.fw_packet);
+
+	ictx.file_pos += read_res;
+	ictx.fw_packet_count++;
+	ictx.fw_packet.id++;
+
+	return ret;
+}
+
+static void process_fw_update_rx(struct net_buf **rx_buf)
+{
+	static uint8_t xm_msg;
+	uint8_t eot = XM_EOT;
+
+	xm_msg = net_buf_get_u8(rx_buf);
+
+	if (xm_msg == XM_NACK) {
+		if (ictx.fw_update_state == FW_UP_START) {
+			/* send first FW update packet */
+			LOG_INF("FW update start");
+
+			ictx.fw_update_state = FW_UP_WIP;
+			ictx.file_pos = 0;
+			ictx.fw_packet_count = 1;
+			ictx.fw_packet.id = 1;
+			ictx.fw_packet.preamble = XM_SOH_1K;
+
+			prepare_and_send_fw_packet();
+		} else if (ictx.fw_update_state == FW_UP_WIP) {
+			LOG_DBG("RX FW update NACK");
+			/* resend last packet */
+			send_fw_update_packet(&ictx.fw_packet);
+		}
+	} else if (xm_msg == XM_ACK) {
+		LOG_DBG("RX FW update ACK");
+		if (ictx.fw_update_state == FW_UP_WIP) {
+			/* send next FW update packet */
+			prepare_and_send_fw_packet();
+		} else if (ictx.fw_update_state == FW_UP_FINISH) {
+			LOG_DBG("Finish sending FW, send EOT");
+			ictx.fw_update_state = FW_UP_NA;
+			mdm_receiver_send(&ictx.mdm_ctx, &eot, sizeof(eot));
+		}
+	} else {
+		LOG_WRN("RX unhandled FW update value: %02x", xm_msg);
+	}
+}
+
+#endif /* CONFIG_MODEM_HL7800_FW_UPDATE */
 
 /* RX thread */
 static void hl7800_rx(void)
@@ -3003,6 +3204,9 @@ static void hl7800_rx(void)
 		CMD_HANDLER("+KUDP_NOTIF: ", sock_notif),
 		CMD_HANDLER("+KTCP_DATA: ", sockdataind),
 		CMD_HANDLER("+KUDP_DATA: ", sockdataind),
+
+		/* FIMWARE UPDATE RESPONSES */
+		CMD_HANDLER("+WDSI: ", device_service_ind),
 	};
 
 	while (true) {
@@ -3021,6 +3225,16 @@ static void hl7800_rx(void)
 		while (rx_buf) {
 			removeLineFromBuf = true;
 			cmd_handled = false;
+
+#ifdef CONFIG_MODEM_HL7800_FW_UPDATE
+			if (ictx.fw_update_state != FW_UP_NA) {
+				process_fw_update_rx(&rx_buf);
+				if (!rx_buf) {
+					break;
+				}
+			}
+#endif
+
 			net_buf_skipcrlf(&rx_buf);
 			if (!rx_buf) {
 				break;
@@ -4264,6 +4478,62 @@ static inline uint8_t *hl7800_get_mac(struct device *dev)
 	return ctx->mac_addr;
 }
 
+#ifdef CONFIG_MODEM_HL7800_FW_UPDATE
+int32_t mdm_hl7800_update_fw(char *filePath)
+{
+	int ret = 0;
+	struct fs_dirent fileInfo;
+	char cmd1[sizeof("AT+WDSD=24643584")];
+
+	/* HL7800 will stay locked for the duration of the FW update */
+	hl7800_lock();
+
+	/* get file info */
+	ret = fs_stat(filePath, &fileInfo);
+	if (ret >= 0) {
+		LOG_DBG("file '%s' size %u", log_strdup(fileInfo.name),
+			fileInfo.size);
+	} else {
+		LOG_ERR("Faild to get file [%s] info: %d", log_strdup(filePath),
+			ret);
+		goto err;
+	}
+
+	ret = fs_open(&ictx.fw_update_file, filePath);
+	if (ret < 0) {
+		LOG_ERR("%s open err: %d", log_strdup(filePath), ret);
+		goto err;
+	}
+
+	/* turn on device service indications */
+	ret = send_at_cmd(NULL, "AT+WDSI=2", MDM_CMD_SEND_TIMEOUT, 0, false);
+	if (ret < 0) {
+		goto err;
+	}
+
+	if (ictx.iface && net_if_is_up(ictx.iface)) {
+		LOG_DBG("HL7800 iface DOWN");
+		hl7800_stop_rssi_work();
+		net_if_down(ictx.iface);
+		notify_all_tcp_sockets_closed();
+	}
+
+	/* start firmware update process */
+	LOG_INF("Initiate FW update, total packets: %d",
+		((fileInfo.size / XMODEM_DATA_SIZE) + 1));
+	ictx.fw_update_state = FW_UP_START;
+	snprintk(cmd1, sizeof(cmd1), "AT+WDSD=%d", fileInfo.size);
+	send_at_cmd(NULL, cmd1, K_NO_WAIT, 0, false);
+
+	goto done;
+
+err:
+	hl7800_unlock();
+done:
+	return ret;
+}
+#endif
+
 static int hl7800_init(struct device *dev)
 {
 	int i, ret = 0;
@@ -4313,6 +4583,12 @@ static int hl7800_init(struct device *dev)
 	k_work_init(&ictx.mdm_vgpio_work, mdm_vgpio_work_cb);
 	k_delayed_work_init(&ictx.mdm_reset_work, mdm_reset_work_callback);
 	k_delayed_work_init(&ictx.allow_sleep_work, allow_sleep_work_callback);
+
+#ifdef CONFIG_MODEM_HL7800_FW_UPDATE
+	k_work_init(&ictx.finish_fw_update_work,
+		    finish_fw_update_work_callback);
+	ictx.fw_updated = false;
+#endif
 
 	/* setup port devices and pin directions */
 	for (i = 0; i < MAX_MDM_CONTROL_PINS; i++) {

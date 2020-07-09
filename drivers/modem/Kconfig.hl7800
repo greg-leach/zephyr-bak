@@ -17,6 +17,13 @@ menuconfig MODEM_HL7800
 
 if MODEM_HL7800
 
+config MODEM_HL7800_FW_UPDATE
+	bool "Enable firmware update"
+	default "n"
+	select FILE_SYSTEM
+	help
+	  Enable the ability to update the HL7800 via XMODEM by providing an update file to the update API.
+
 config MODEM_HL7800_SET_APN_NAME_ON_STARTUP
 	bool "Set APN name during driver init"
 	help

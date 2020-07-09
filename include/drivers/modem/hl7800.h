@@ -19,6 +19,7 @@ extern "C" {
 #include <time.h>
 #endif
 
+
 /* The size includes the NUL character, the strlen doesn't */
 #define MDM_HL7800_REVISION_MAX_SIZE 29
 #define MDM_HL7800_REVISION_MAX_STRLEN (MDM_HL7800_REVISION_MAX_SIZE - 1)
@@ -222,6 +223,18 @@ void mdm_hl7800_generate_status_events(void);
  * @param 0 if successful
  */
 int32_t mdm_hl7800_get_local_time(struct tm *tm, int32_t *offset);
+#endif
+
+#ifdef CONFIG_MODEM_HL7800_FW_UPDATE
+/**
+ * @brief Update the HL7800 via XMODEM protocol.  During the firmware update
+ * no other modem fuctions will be available.
+ * 
+ * @param fileName Absolute path of the update file
+ * 
+ * @param 0 if successful
+ */
+int32_t mdm_hl7800_update_fw(char *filePath);
 #endif
 
 #ifdef __cplusplus
