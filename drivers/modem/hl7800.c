@@ -146,8 +146,6 @@ enum device_service_indications {
 };
 
 #ifdef CONFIG_MODEM_HL7800_FW_UPDATE
-enum firmware_update_state { FW_UP_NA, FW_UP_START, FW_UP_WIP, FW_UP_FINISH };
-
 enum XMODEM_CONTROL_CHARACTERS {
 	XM_SOH = 0x01,
 	XM_SOH_1K = 0x02,
@@ -456,10 +454,10 @@ struct hl7800_iface_ctx {
 
 #ifdef CONFIG_MODEM_HL7800_FW_UPDATE
 	/* firmware update */
-	enum firmware_update_state fw_update_state;
+	enum mdm_hl7800_fota_state fw_update_state;
 	struct fs_file_t fw_update_file;
 	struct xmodem_packet fw_packet;
-	int fw_packet_count;
+	uint32_t fw_packet_count;
 	int file_pos;
 	struct k_work finish_fw_update_work;
 	bool fw_updated;
@@ -524,6 +522,13 @@ static int modem_boot_handler(char *reason);
 static void mdm_vgpio_work_cb(struct k_work *item);
 static void mdm_reset_work_callback(struct k_work *item);
 static int write_apn(char *access_point_name);
+
+#ifdef CONFIG_MODEM_HL7800_FW_UPDATE
+static char *get_fota_state_string(enum mdm_hl7800_fota_state state);
+static void set_fota_state(enum mdm_hl7800_fota_state state);
+static void generate_fota_state_event(void);
+static void generate_fota_count_event(void);
+#endif
 
 #ifdef CONFIG_NEWLIB_LIBC
 static bool convert_time_string_to_struct(struct tm *tm, int32_t *offset,
@@ -1009,12 +1014,16 @@ void mdm_hl7800_generate_status_events(void)
 	generate_startup_state_event();
 	generate_network_state_event();
 	generate_sleep_state_event();
+#ifdef CONFIG_MODEM_HL7800_FW_UPDATE
+	generate_fota_state_event();
+#endif
 	event_handler(HL7800_EVENT_RSSI, &ictx.mdm_ctx.data_rssi);
 	event_handler(HL7800_EVENT_SINR, &ictx.mdm_sinr);
 	event_handler(HL7800_EVENT_APN_UPDATE, &ictx.mdm_apn);
 	event_handler(HL7800_EVENT_RAT, &ictx.mdm_rat);
 	event_handler(HL7800_EVENT_BANDS, ictx.mdm_bands_string);
 	event_handler(HL7800_EVENT_ACTIVE_BANDS, ictx.mdm_active_bands_string);
+	event_handler(HL7800_EVENT_REVISION, ictx.mdm_revision);
 	hl7800_unlock();
 }
 
@@ -1377,6 +1386,7 @@ static bool on_cmd_atcmdinfo_revision(struct net_buf **buf, uint16_t len)
 		ictx.mdm_revision, sizeof(ictx.mdm_revision) - 1, *buf, 0, len);
 	ictx.mdm_revision[out_len] = 0;
 	LOG_INF("Revision: %s", log_strdup(ictx.mdm_revision));
+	event_handler(HL7800_EVENT_REVISION, ictx.mdm_revision);
 done:
 	return true;
 }
@@ -1836,6 +1846,50 @@ static void generate_sleep_state_event(void)
 	event_handler(HL7800_EVENT_SLEEP_STATE_CHANGE, &event);
 }
 
+#ifdef CONFIG_MODEM_HL7800_FW_UPDATE
+static char *get_fota_state_string(enum mdm_hl7800_fota_state state)
+{
+	/* clang-format off */
+	switch (state) {
+		PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800_FOTA, IDLE);
+		PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800_FOTA, START);
+		PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800_FOTA, WIP);
+		PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800_FOTA, PAD);
+		PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800_FOTA, SEND_EOT);
+		PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800_FOTA, FILE_ERROR);
+		PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800_FOTA, INSTALL);
+		PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800_FOTA, REBOOT_AND_RECONFIGURE);
+		PREFIXED_SWITCH_CASE_RETURN_STRING(HL7800_FOTA, COMPLETE);
+	default:
+		return "UNKNOWN";
+	}
+	/* clang-format on */
+}
+
+static void set_fota_state(enum mdm_hl7800_fota_state state)
+{
+	LOG_INF("FOTA state: %s->%s",
+		log_strdup(get_fota_state_string(ictx.fw_update_state)),
+		log_strdup(get_fota_state_string(state)));
+	ictx.fw_update_state = state;
+	generate_fota_state_event();
+}
+
+static void generate_fota_state_event(void)
+{
+	struct mdm_hl7800_compound_event event;
+	event.code = ictx.fw_update_state;
+	event.string = get_fota_state_string(ictx.fw_update_state);
+	event_handler(HL7800_EVENT_FOTA_STATE, &event);
+}
+
+static void generate_fota_count_event(void)
+{
+	uint32_t count = ictx.fw_packet_count * XMODEM_DATA_SIZE;
+	event_handler(HL7800_EVENT_FOTA_COUNT, &count);
+}
+#endif
+
 /* Handler: +KSUP: # */
 static bool on_cmd_startup_report(struct net_buf **buf, uint16_t len)
 {
@@ -1852,8 +1906,7 @@ static bool on_cmd_startup_report(struct net_buf **buf, uint16_t len)
 #ifdef CONFIG_MODEM_HL7800_FW_UPDATE
 	if (ictx.fw_updated) {
 		ictx.fw_updated = false;
-		LOG_INF("FW update finished! Reset and reconfigure.");
-
+		set_fota_state(HL7800_FOTA_REBOOT_AND_RECONFIGURE);
 		/* issue reset after a firmware update to reconfigure modem state */
 		k_delayed_work_submit_to_queue(&hl7800_workq,
 					       &ictx.mdm_reset_work, K_NO_WAIT);
@@ -3029,7 +3082,7 @@ static void finish_fw_update_work_callback(struct k_work *item)
 
 	send_at_cmd(NULL, "AT+WDSR=4", MDM_CMD_SEND_TIMEOUT, 0, false);
 	ictx.fw_updated = true;
-	LOG_INF("FW transfer finished.  Waiting for reset");
+	set_fota_state(HL7800_FOTA_INSTALL);
 	hl7800_unlock();
 }
 
@@ -3051,14 +3104,10 @@ static uint8_t calc_fw_update_crc(uint8_t *ptr, int count)
 
 static int send_fw_update_packet(struct xmodem_packet *pkt)
 {
-	int ret = 0;
-
-	/* TODO: generate event to let user app track progress */
+	generate_fota_count_event();
 	LOG_DBG("Send FW update packet %d,%d", pkt->id, ictx.fw_packet_count);
-	ret = mdm_receiver_send(&ictx.mdm_ctx, (const uint8_t *)pkt,
-				XMODEM_PACKET_SIZE);
-
-	return ret;
+	return mdm_receiver_send(&ictx.mdm_ctx, (const uint8_t *)pkt,
+				 XMODEM_PACKET_SIZE);
 }
 
 static int prepare_and_send_fw_packet(void)
@@ -3070,6 +3119,7 @@ static int prepare_and_send_fw_packet(void)
 
 	ret = fs_seek(&ictx.fw_update_file, ictx.file_pos, FS_SEEK_SET);
 	if (ret < 0) {
+		set_fota_state(HL7800_FOTA_FILE_ERROR);
 		LOG_ERR("Could not seek to offset %d of file", ictx.file_pos);
 		return ret;
 	}
@@ -3077,10 +3127,11 @@ static int prepare_and_send_fw_packet(void)
 	read_res = fs_read(&ictx.fw_update_file, ictx.fw_packet.data,
 			   XMODEM_DATA_SIZE);
 	if (read_res < 0) {
+		set_fota_state(HL7800_FOTA_FILE_ERROR);
 		LOG_ERR("Failed to read fw update file [%d]", read_res);
 		return ret;
 	} else if (read_res < XMODEM_DATA_SIZE) {
-		ictx.fw_update_state = FW_UP_FINISH;
+		set_fota_state(HL7800_FOTA_PAD);
 		fs_close(&ictx.fw_update_file);
 		/* pad rest of data */
 		for (int i = read_res; i < XMODEM_DATA_SIZE; i++) {
@@ -3108,30 +3159,27 @@ static void process_fw_update_rx(struct net_buf **rx_buf)
 	xm_msg = net_buf_get_u8(rx_buf);
 
 	if (xm_msg == XM_NACK) {
-		if (ictx.fw_update_state == FW_UP_START) {
+		if (ictx.fw_update_state == HL7800_FOTA_START) {
 			/* send first FW update packet */
-			LOG_INF("FW update start");
-
-			ictx.fw_update_state = FW_UP_WIP;
+			set_fota_state(HL7800_FOTA_WIP);
 			ictx.file_pos = 0;
 			ictx.fw_packet_count = 1;
 			ictx.fw_packet.id = 1;
 			ictx.fw_packet.preamble = XM_SOH_1K;
 
 			prepare_and_send_fw_packet();
-		} else if (ictx.fw_update_state == FW_UP_WIP) {
+		} else if (ictx.fw_update_state == HL7800_FOTA_WIP) {
 			LOG_DBG("RX FW update NACK");
 			/* resend last packet */
 			send_fw_update_packet(&ictx.fw_packet);
 		}
 	} else if (xm_msg == XM_ACK) {
 		LOG_DBG("RX FW update ACK");
-		if (ictx.fw_update_state == FW_UP_WIP) {
+		if (ictx.fw_update_state == HL7800_FOTA_WIP) {
 			/* send next FW update packet */
 			prepare_and_send_fw_packet();
-		} else if (ictx.fw_update_state == FW_UP_FINISH) {
-			LOG_DBG("Finish sending FW, send EOT");
-			ictx.fw_update_state = FW_UP_NA;
+		} else if (ictx.fw_update_state == HL7800_FOTA_PAD) {
+			set_fota_state(HL7800_FOTA_SEND_EOT);
 			mdm_receiver_send(&ictx.mdm_ctx, &eot, sizeof(eot));
 		}
 	} else {
@@ -3227,7 +3275,9 @@ static void hl7800_rx(void)
 			cmd_handled = false;
 
 #ifdef CONFIG_MODEM_HL7800_FW_UPDATE
-			if (ictx.fw_update_state != FW_UP_NA) {
+			if ((ictx.fw_update_state == HL7800_FOTA_START) ||
+			    (ictx.fw_update_state == HL7800_FOTA_WIP) ||
+			    (ictx.fw_update_state == HL7800_FOTA_PAD)) {
 				process_fw_update_rx(&rx_buf);
 				if (!rx_buf) {
 					break;
@@ -3504,6 +3554,9 @@ static void modem_reset(void)
 	check_hl7800_awake();
 	set_network_state(HL7800_NOT_REGISTERED);
 	set_startup_state(HL7800_STARTUP_STATE_UNKNOWN);
+#ifdef CONFIG_MODEM_HL7800_FW_UPDATE
+	set_fota_state(HL7800_FOTA_IDLE);
+#endif
 	k_sem_reset(&ictx.mdm_awake);
 }
 
@@ -3866,6 +3919,12 @@ int32_t mdm_hl7800_reset(void)
 	hl7800_lock();
 
 	ret = modem_reset_and_configure();
+
+#ifdef CONFIG_MODEM_HL7800_FW_UPDATE
+	if (ictx.fw_update_state == HL7800_FOTA_REBOOT_AND_RECONFIGURE) {
+		set_fota_state(HL7800_FOTA_COMPLETE);
+	}
+#endif
 
 	hl7800_unlock();
 
@@ -4521,7 +4580,7 @@ int32_t mdm_hl7800_update_fw(char *filePath)
 	/* start firmware update process */
 	LOG_INF("Initiate FW update, total packets: %d",
 		((fileInfo.size / XMODEM_DATA_SIZE) + 1));
-	ictx.fw_update_state = FW_UP_START;
+	set_fota_state(HL7800_FOTA_START);
 	snprintk(cmd1, sizeof(cmd1), "AT+WDSD=%d", fileInfo.size);
 	send_at_cmd(NULL, cmd1, K_NO_WAIT, 0, false);
 

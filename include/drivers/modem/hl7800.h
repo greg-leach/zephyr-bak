@@ -19,7 +19,6 @@ extern "C" {
 #include <time.h>
 #endif
 
-
 /* The size includes the NUL character, the strlen doesn't */
 #define MDM_HL7800_REVISION_MAX_SIZE 29
 #define MDM_HL7800_REVISION_MAX_STRLEN (MDM_HL7800_REVISION_MAX_SIZE - 1)
@@ -71,6 +70,9 @@ enum mdm_hl7800_event {
 	HL7800_EVENT_RAT,
 	HL7800_EVENT_BANDS,
 	HL7800_EVENT_ACTIVE_BANDS,
+	HL7800_EVENT_FOTA_STATE,
+	HL7800_EVENT_FOTA_COUNT,
+	HL7800_EVENT_REVISION
 };
 
 enum mdm_hl7800_startup_state {
@@ -98,7 +100,19 @@ enum mdm_hl7800_network_state {
 enum mdm_hl7800_sleep_state {
 	HL7800_SLEEP_STATE_UNINITIALIZED = 0,
 	HL7800_SLEEP_STATE_ASLEEP,
-	HL7800_SLEEP_STATE_AWAKE,
+	HL7800_SLEEP_STATE_AWAKE
+};
+
+enum mdm_hl7800_fota_state {
+	HL7800_FOTA_IDLE,
+	HL7800_FOTA_START,
+	HL7800_FOTA_WIP,
+	HL7800_FOTA_PAD,
+	HL7800_FOTA_SEND_EOT,
+	HL7800_FOTA_FILE_ERROR,
+	HL7800_FOTA_INSTALL,
+	HL7800_FOTA_REBOOT_AND_RECONFIGURE,
+	HL7800_FOTA_COMPLETE,
 };
 
 /* The modem reports state values as an enumeration and a string */
@@ -201,6 +215,9 @@ bool mdm_hl7800_valid_rat(uint8_t value);
  * HL7800_EVENT_STARTUP_STATE_CHANGE - compound event
  * HL7800_EVENT_RAT - int
  * HL7800_EVENT_BANDS - string
+ * HL7800_EVENT_FOTA_STATE - compound event
+ * HL7800_EVENT_FOTA_COUNT - uint32_t
+ * HL7800_EVENT_REVISION - string
  */
 void mdm_hl7800_register_event_callback(
 	void (*callback)(enum mdm_hl7800_event event, void *event_data));
@@ -229,9 +246,9 @@ int32_t mdm_hl7800_get_local_time(struct tm *tm, int32_t *offset);
 /**
  * @brief Update the HL7800 via XMODEM protocol.  During the firmware update
  * no other modem fuctions will be available.
- * 
+ *
  * @param fileName Absolute path of the update file
- * 
+ *
  * @param 0 if successful
  */
 int32_t mdm_hl7800_update_fw(char *filePath);
