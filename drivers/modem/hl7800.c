@@ -4468,12 +4468,13 @@ static inline uint8_t *hl7800_get_mac(struct device *dev)
 {
 	struct hl7800_iface_ctx *ctx = dev->driver_data;
 
-	/* TODO: move mac_addr to Kconfig option */
-	ctx->mac_addr[0] = 0x00;
-	ctx->mac_addr[1] = 0x10;
-
-	UNALIGNED_PUT(sys_cpu_to_be32(sys_rand32_get()),
-		      (uint32_t *)(ctx->mac_addr + 2));
+	/* use the last 6 digits of the IMEI as the mac address */
+	ctx->mac_addr[0] = ictx.mdm_imei[MDM_HL7800_IMEI_STRLEN - 6];
+	ctx->mac_addr[1] = ictx.mdm_imei[MDM_HL7800_IMEI_STRLEN - 5];
+	ctx->mac_addr[2] = ictx.mdm_imei[MDM_HL7800_IMEI_STRLEN - 4];
+	ctx->mac_addr[3] = ictx.mdm_imei[MDM_HL7800_IMEI_STRLEN - 3];
+	ctx->mac_addr[4] = ictx.mdm_imei[MDM_HL7800_IMEI_STRLEN - 2];
+	ctx->mac_addr[5] = ictx.mdm_imei[MDM_HL7800_IMEI_STRLEN - 1];
 
 	return ctx->mac_addr;
 }
