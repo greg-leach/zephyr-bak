@@ -1455,9 +1455,7 @@ static bool on_cmd_atcmdinfo_iccid(struct net_buf **buf, uint16_t len)
 		LOG_ERR("Unable to find ICCID end");
 		goto done;
 	}
-	if (len < MDM_HL7800_ICCID_STRLEN) {
-		LOG_WRN("ICCID too short (len:%d)", len);
-	} else if (len > MDM_HL7800_ICCID_STRLEN) {
+	if (len > MDM_HL7800_ICCID_STRLEN) {
 		LOG_WRN("ICCID too long (len:%d)", len);
 		len = MDM_HL7800_ICCID_STRLEN;
 	}
