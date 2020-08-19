@@ -1,10 +1,7 @@
-# Kconfig - Sierra Wireless HL7800 driver options
+# Sierra Wireless HL7800 modem driver options
 
-#
-# Copyright (c) 2019 Laird Connectivity
-#
+# Copyright (c) 2020 Laird Connectivity
 # SPDX-License-Identifier: Apache-2.0
-#
 
 menuconfig MODEM_HL7800
 	bool "Enable Sierra Wireless HL7800 modem driver"

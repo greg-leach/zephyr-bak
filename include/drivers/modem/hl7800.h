@@ -1,9 +1,9 @@
 /** @file
- * @brief HL7800 modem header file.
+ * @brief HL7800 modem public API header file.
  *
  * Allows an application to control the HL7800 modem.
  *
- * Copyright (c) 2019 Laird Connectivity
+ * Copyright (c) 2020 Laird Connectivity
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -122,6 +122,25 @@ struct mdm_hl7800_compound_event {
 };
 
 /**
+ * event - The type of event
+ * event_data - Pointer to event specific data structure
+ * HL7800_EVENT_NETWORK_STATE_CHANGE - compound event
+ * HL7800_EVENT_APN_UPDATE - struct mdm_hl7800_apn
+ * HL7800_EVENT_RSSI - int
+ * HL7800_EVENT_SINR - int
+ * HL7800_EVENT_STARTUP_STATE_CHANGE - compound event
+ * HL7800_EVENT_SLEEP_STATE_CHANGE - compound event
+ * HL7800_EVENT_RAT - int
+ * HL7800_EVENT_BANDS - string
+ * HL7800_EVENT_ACTIVE_BANDS - string
+ * HL7800_EVENT_FOTA_STATE - compound event
+ * HL7800_EVENT_FOTA_COUNT - uint32_t
+ * HL7800_EVENT_REVISION - string
+ */
+typedef void (*mdm_hl7800_event_callback_t)(enum mdm_hl7800_event event,
+					    void *event_data);
+
+/**
  * @brief Power off the HL7800
  *
  * @return int32_t 0 for success
@@ -136,14 +155,16 @@ int32_t mdm_hl7800_power_off(void);
 int32_t mdm_hl7800_reset(void);
 
 /**
- * @brief Control the wake signals to the HL7800
+ * @brief Control the wake signals to the HL7800.
+ * @note this API should only be used for debug purposes.
  *
  * @param awake True to keep the HL7800 awake, False to allow sleep
  */
 void mdm_hl7800_wakeup(bool awake);
 
 /**
- * @brief Send an AT command to the HL7800
+ * @brief Send an AT command to the HL7800.
+ * @note this API should only be used for debug purposes.
  *
  * @param data AT command string
  * @return int32_t 0 for success
@@ -206,21 +227,9 @@ bool mdm_hl7800_valid_rat(uint8_t value);
 /**
  * @brief Register a function that is called when a modem event occurs.
  *
- * @param MDM_HL7800_event The type of event
- * @param event_data Pointer to event specific data structure
- * HL7800_EVENT_NETWORK_STATE_CHANGE - compound event
- * HL7800_EVENT_APN_UPDATE - struct mdm_hl7800_apn
- * HL7800_EVENT_RSSI - int
- * HL7800_EVENT_SINR - int
- * HL7800_EVENT_STARTUP_STATE_CHANGE - compound event
- * HL7800_EVENT_RAT - int
- * HL7800_EVENT_BANDS - string
- * HL7800_EVENT_FOTA_STATE - compound event
- * HL7800_EVENT_FOTA_COUNT - uint32_t
- * HL7800_EVENT_REVISION - string
+ * @param cb event callback
  */
-void mdm_hl7800_register_event_callback(
-	void (*callback)(enum mdm_hl7800_event event, void *event_data));
+void mdm_hl7800_register_event_callback(mdm_hl7800_event_callback_t cb);
 
 /**
  * @brief Force modem module to generate status events.

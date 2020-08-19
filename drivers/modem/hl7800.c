@@ -3993,11 +3993,10 @@ int32_t mdm_hl7800_power_off(void)
 	return rc;
 }
 
-void mdm_hl7800_register_event_callback(
-	void (*callback)(enum mdm_hl7800_event event, void *event_data))
+void mdm_hl7800_register_event_callback(mdm_hl7800_event_callback_t cb)
 {
 	int key = irq_lock();
-	ictx.event_callback = callback;
+	ictx.event_callback = cb;
 	irq_unlock(key);
 }
 
