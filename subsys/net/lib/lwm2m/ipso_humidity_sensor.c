@@ -6,11 +6,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-/*
- * Source material for IPSO Sensor object (3303):
- * https://github.com/IPSO-Alliance/pub/blob/master/docs/IPSO-Smart-Objects.pdf
- */
-
 #define LOG_MODULE_NAME net_ipso_humidity_sensor
 #define LOG_LEVEL CONFIG_LWM2M_LOG_LEVEL
 
@@ -34,7 +29,7 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 
 #define MAX_INSTANCE_COUNT CONFIG_LWM2M_IPSO_HUMIDITY_SENSOR_INSTANCE_COUNT
 
-#define IPSO_OBJECT_ID HUMIDITY_OBJECT_RID
+#define IPSO_OBJECT_ID IPSO_OBJECT_HUMIDITY_SENSOR_ID
 
 #define SENSOR_NAME "Humidity"
 
@@ -58,7 +53,7 @@ static float32_value_t max_range_value[MAX_INSTANCE_COUNT];
 static struct lwm2m_engine_obj sensor;
 static struct lwm2m_engine_obj_field fields[] = {
 	OBJ_FIELD_DATA(SENSOR_VALUE_RID, R, FLOAT32),
-	OBJ_FIELD_DATA(UNITS_RID, R_OPT, STRING),
+	OBJ_FIELD_DATA(SENSOR_UNITS_RID, R_OPT, STRING),
 	OBJ_FIELD_DATA(MIN_MEASURED_VALUE_RID, R_OPT, FLOAT32),
 	OBJ_FIELD_DATA(MAX_MEASURED_VALUE_RID, R_OPT, FLOAT32),
 	OBJ_FIELD_DATA(MIN_RANGE_VALUE_RID, R_OPT, FLOAT32),
@@ -195,7 +190,7 @@ humidity_sensor_create(uint16_t obj_inst_id)
 	INIT_OBJ_RES(SENSOR_VALUE_RID, res[index], i, res_inst[index], j, 1,
 		     true, &sensor_value[index], sizeof(*sensor_value), NULL,
 		     NULL, sensor_value_write_cb, NULL);
-	INIT_OBJ_RES_DATA(UNITS_RID, res[index], i, res_inst[index], j,
+	INIT_OBJ_RES_DATA(SENSOR_UNITS_RID, res[index], i, res_inst[index], j,
 			  units[index], UNIT_STR_MAX_SIZE);
 	INIT_OBJ_RES_DATA(MIN_MEASURED_VALUE_RID, res[index], i,
 			  res_inst[index], j, &min_measured_value[index],
