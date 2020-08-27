@@ -256,11 +256,11 @@ int32_t mdm_hl7800_get_local_time(struct tm *tm, int32_t *offset);
  * @brief Update the HL7800 via XMODEM protocol.  During the firmware update
  * no other modem fuctions will be available.
  *
- * @param fileName Absolute path of the update file
+ * @param file_path Absolute path of the update file
  *
  * @param 0 if successful
  */
-int32_t mdm_hl7800_update_fw(char *filePath);
+int32_t mdm_hl7800_update_fw(char *file_path);
 #endif
 
 #ifdef __cplusplus

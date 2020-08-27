@@ -10,50 +10,61 @@ menuconfig MODEM_HL7800
 	select DEVICE_POWER_MANAGEMENT
 	imply GPIO
 	help
-	  Choose this setting to enable Sierra Wireless HL7800 LTE-M/NB-IoT modem driver.
+	  Choose this setting to enable
+	  Sierra Wireless HL7800 LTE-M/NB-IoT modem driver.
 
 if MODEM_HL7800
 
 config MODEM_HL7800_FW_UPDATE
 	bool "Enable firmware update"
-	default "n"
 	select FILE_SYSTEM
 	help
-	  Enable the ability to update the HL7800 via XMODEM by providing an update file to the update API.
+	  Enable the ability to update the HL7800 via XMODEM
+	  by providing an update file to the update API.
 
 config MODEM_HL7800_SET_APN_NAME_ON_STARTUP
 	bool "Set APN name during driver init"
 	help
-	  If APN doesn't match MODEM_HL7800_APN_NAME on startup, then it will be set.
+	  If APN doesn't match MODEM_HL7800_APN_NAME on startup,
+	  then it will be set.
 
 if MODEM_HL7800_SET_APN_NAME_ON_STARTUP
 
 config MODEM_HL7800_APN_NAME
 	string "APN name for establishing network connection"
-	default ""
 	help
 	  This setting is used in the AT+CGDCONT command to set the APN name
 	  for the PDP context.
 
 endif # MODEM_HL7800_SET_APN_NAME_ON_STARTUP
 
-config MODEM_HL7800_DEFAULT_RAT
-	int "Radio Access Technology (Mode) that will be set on modem init"
-	default -1
-	range -1 1
+choice MODEM_HL7800_RAT
+	bool "Radio Access Technology Mode"
+	default MODEM_HL7800_RAT_NO_CHANGE
+
+config MODEM_HL7800_RAT_NO_CHANGE
+	bool "Don't change the RAT"
 	help
-		-1 Don't change current mode
-		0 LTE category M1 (LTE-M1)
-		1 LTE category NB1 (NB-IoT)
-		If the mode doesn't match this setting on startup, then it will be set.
-		An application can change the mode, but that setting is temporary
-		[until the next reset] unless MODEM_HL7800_DEFAULT_RAT is -1.
+	  Leave the HL7800 RAT unchanged during modem init.
+
+config MODEM_HL7800_RAT_M1
+	bool "LTE-M1"
+	help
+	  Enable LTE Cat-M1 mode during modem init.
+
+config MODEM_HL7800_RAT_NB1
+	bool "NB-IoT"
+	help
+	  Enable LTE Cat-NB1 mode during modem init.
+
+endchoice
 
 menuconfig MODEM_HL7800_CONFIGURE_BANDS
 	bool "Configure modem bands"
 	default "y"
 	help
-	  Choose this setting to configure which LTE bands the HL7800 modem should use.
+	  Choose this setting to configure which LTE bands the
+	  HL7800 modem should use.
 
 if MODEM_HL7800_CONFIGURE_BANDS
 
@@ -95,13 +106,11 @@ config MODEM_HL7800_BAND_8
 
 config MODEM_HL7800_BAND_9
 	bool "Enable Band 9  (1900MHz)"
-	default "n"
 	help
 	  Enable Band 9 (1900MHz)
 
 config MODEM_HL7800_BAND_10
 	bool "Enable Band 10 (2100MHz)"
-	default "n"
 	help
 	  Enable Band 10 (2100MHz)
 
@@ -119,25 +128,21 @@ config MODEM_HL7800_BAND_13
 
 config MODEM_HL7800_BAND_14
 	bool "Enable Band 14 (700MHz)"
-	default "n"
 	help
 	  Enable Band 14 (700MHz)
 
 config MODEM_HL7800_BAND_17
 	bool "Enable Band 17 (700MHz)"
-	default "n"
 	help
 	  Enable Band 17 (700MHz)
 
 config MODEM_HL7800_BAND_18
 	bool "Enable Band 18 (800MHz)"
-	default "n"
 	help
 	  Enable Band 18 (800MHz)
 
 config MODEM_HL7800_BAND_19
 	bool "Enable Band 19 (800MHz)"
-	default "n"
 	help
 	  Enable Band 19 (800MHz)
 
@@ -149,19 +154,16 @@ config MODEM_HL7800_BAND_20
 
 config MODEM_HL7800_BAND_25
 	bool "Enable Band 25 (1900MHz)"
-	default "n"
 	help
 	  Enable Band 25 (1900MHz)
 
 config MODEM_HL7800_BAND_26
 	bool "Enable Band 26 (800MHz)"
-	default "n"
 	help
 	  Enable Band 26 (800MHz)
 
 config MODEM_HL7800_BAND_27
 	bool "Enable Band 27 (800MHz)"
-	default "n"
 	help
 	  Enable Band 27 (800MHz)
 
@@ -173,7 +175,6 @@ config MODEM_HL7800_BAND_28
 
 config MODEM_HL7800_BAND_66
 	bool "Enable Band 66 (1800MHz)"
-	default "n"
 	help
 	  Enable Band 66 (1800MHz)
 
@@ -182,7 +183,7 @@ endif # MODEM_HL7800_CONFIGURE_BAND
 menuconfig MODEM_HL7800_LOW_POWER_MODE
 	bool "Enable low power modes"
 	help
-		Choose this setting to enable a low power mode for the HL7800 modem
+	  Choose this setting to enable a low power mode for the HL7800 modem
 
 if MODEM_HL7800_LOW_POWER_MODE
 
@@ -208,7 +209,8 @@ config MODEM_HL7800_EDRX_VALUE
 	default "0101"
 	help
 	  Half a byte in a 4-bit format. The eDRX value refers to bit 4 to 1
-	  of octet 3 of the Extended DRX parameters information element. Default value is 81.92 seconds.
+	  of octet 3 of the Extended DRX parameters information element.
+	  Default value is 81.92 seconds.
 
 endif # MODEM_HL7800_EDRX
 
@@ -219,7 +221,8 @@ config MODEM_HL7800_PSM_PERIODIC_TAU
 	default "10000010"
 	help
 	  Requested extended periodic TAU (tracking area update) value (T3412)
-	  to be allocated to the UE in E-UTRAN. One byte in an 8-bit format. Default value is 1 minute.
+	  to be allocated to the UE in E-UTRAN. One byte in an 8-bit format.
+	  Default value is 1 minute.
 
 config MODEM_HL7800_PSM_ACTIVE_TIME
 	string "Requested active time"
