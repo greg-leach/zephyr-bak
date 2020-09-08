@@ -313,7 +313,7 @@ static const struct mdm_control_pinconfig pinconfig[] = {
 #define PROFILE_LINE_2                                                         \
 	"S00:255 S01:255 S03:255 S04:255 S05:255 S07:255 S08:255 S10:255\r\n"
 
-#define SETUP_GPRS_CONNECTION_CMD "AT+KCNXCFG=1,\"GPRS\",\"\""
+#define SETUP_GPRS_CONNECTION_CMD "AT+KCNXCFG=1,\"GPRS\",\"\",,,\"IPV4V6\""
 
 #define MAX_PROFILE_LINE_LENGTH                                                \
 	MAX(sizeof(PROFILE_LINE_1), sizeof(PROFILE_LINE_2))
@@ -2959,8 +2959,12 @@ static int start_socket_rx(struct hl7800_socket *sock, uint16_t rx_size)
 			sock->rx_size =
 				net_if_get_mtu(ictx.iface) - NET_IPV4UDPH_LEN;
 		}
-#else
-#error IPV6 not supported in HL7800 driver
+#endif
+#if defined(CONFIG_NET_IPV6)
+		if (rx_size > (net_if_get_mtu(ictx.iface) - NET_IPV6UDPH_LEN)) {
+			sock->rx_size =
+				net_if_get_mtu(ictx.iface) - NET_IPV6UDPH_LEN;
+		}
 #endif
 		snprintk(sendbuf, sizeof(sendbuf), "AT+KUDPRCV=%d,%u",
 			 sock->socket_id, rx_size);
@@ -2970,8 +2974,12 @@ static int start_socket_rx(struct hl7800_socket *sock, uint16_t rx_size)
 			sock->rx_size =
 				net_if_get_mtu(ictx.iface) - NET_IPV4TCPH_LEN;
 		}
-#else
-#error IPV6 not supported in HL7800 driver
+#endif
+#if defined(CONFIG_NET_IPV6)
+		if (rx_size > (net_if_get_mtu(ictx.iface) - NET_IPV6TCPH_LEN)) {
+			sock->rx_size =
+				net_if_get_mtu(ictx.iface) - NET_IPV6TCPH_LEN;
+		}
 #endif
 		snprintk(sendbuf, sizeof(sendbuf), "AT+KTCPRCV=%d,%u",
 			 sock->socket_id, sock->rx_size);
@@ -3996,7 +4004,7 @@ static int write_apn(char *access_point_name)
 
 	/* PDP Context */
 	memset(cmd_string, 0, MDM_HL7800_APN_CMD_MAX_SIZE);
-	strncat(cmd_string, "AT+CGDCONT=1,\"IP\",\"",
+	strncat(cmd_string, "AT+CGDCONT=1,\"IPV4V6\",\"",
 		MDM_HL7800_APN_CMD_MAX_STRLEN);
 	strncat(cmd_string, access_point_name, MDM_HL7800_APN_CMD_MAX_STRLEN);
 	strncat(cmd_string, "\"", MDM_HL7800_APN_CMD_MAX_STRLEN);
