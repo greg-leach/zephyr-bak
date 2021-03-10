@@ -208,13 +208,10 @@ int dns_resolve_init(struct dns_resolve_context *ctx, const char *servers[],
 	}
 
 	if (ctx->is_used) {
-		ret = -ENOTEMPTY;
-		goto fail;
+		return -ENOTEMPTY;
 	}
 
 	(void)memset(ctx, 0, sizeof(*ctx));
-
-	(void)k_mutex_init(&ctx->lock);
 
 	if (servers) {
 		for (i = 0; idx < SERVER_COUNT && servers[i]; i++) {
@@ -282,8 +279,7 @@ int dns_resolve_init(struct dns_resolve_context *ctx, const char *servers[],
 
 		if (!local_addr) {
 			NET_DBG("Local address not set");
-			ret = -EAFNOSUPPORT;
-			goto fail;
+			return -EAFNOSUPPORT;
 		}
 
 		ret = net_context_get(ctx->servers[i].dns_server.sa_family,
@@ -291,14 +287,14 @@ int dns_resolve_init(struct dns_resolve_context *ctx, const char *servers[],
 				      &ctx->servers[i].net_ctx);
 		if (ret < 0) {
 			NET_DBG("Cannot get net_context (%d)", ret);
-			goto fail;
+			return ret;
 		}
 
 		ret = net_context_bind(ctx->servers[i].net_ctx,
 				       local_addr, addr_len);
 		if (ret < 0) {
 			NET_DBG("Cannot bind DNS context (%d)", ret);
-			goto fail;
+			return ret;
 		}
 
 		iface = net_context_get_iface(ctx->servers[i].net_ctx);
@@ -326,16 +322,13 @@ int dns_resolve_init(struct dns_resolve_context *ctx, const char *servers[],
 	if (count == 0) {
 		/* No servers defined */
 		NET_DBG("No DNS servers defined.");
-		ret = -EINVAL;
-		goto fail;
+		return -EINVAL;
 	}
 
 	ctx->is_used = true;
 	ctx->buf_timeout = DNS_BUF_TIMEOUT;
-	ret = 0;
 
-fail:
-	return ret;
+	return 0;
 }
 
 static inline int get_cb_slot(struct dns_resolve_context *ctx)
@@ -368,10 +361,6 @@ static inline int get_slot_by_id(struct dns_resolve_context *ctx,
 	return -ENOENT;
 }
 
-/* Unit test needs to be able to call this function */
-#if !defined(CONFIG_NET_TEST)
-static
-#endif
 int dns_validate_msg(struct dns_resolve_context *ctx,
 		     struct dns_msg_t *dns_msg,
 		     uint16_t *dns_id,
@@ -690,8 +679,6 @@ static void cb_recv(struct net_context *net_ctx,
 
 	ARG_UNUSED(net_ctx);
 
-	k_mutex_lock(&ctx->lock, K_FOREVER);
-
 	if (status) {
 		ret = DNS_EAI_SYSTEM;
 		goto quit;
@@ -770,8 +757,6 @@ free_buf:
 	if (dns_cname) {
 		net_buf_unref(dns_cname);
 	}
-
-	k_mutex_unlock(&ctx->lock);
 }
 
 static int dns_write(struct dns_resolve_context *ctx,
@@ -855,15 +840,11 @@ static int dns_resolve_cancel_with_hash(struct dns_resolve_context *ctx,
 					uint16_t query_hash,
 					const char *query_name)
 {
-	int ret;
 	int i;
-
-	k_mutex_lock(&ctx->lock, K_FOREVER);
 
 	i = get_slot_by_id(ctx, dns_id, query_hash);
 	if (i < 0 || !ctx->queries[i].cb) {
-		ret = -ENOENT;
-		goto fail;
+		return -ENOENT;
 	}
 
 	NET_DBG("Cancelling DNS req %u (name %s type %d hash %u)", dns_id,
@@ -874,9 +855,6 @@ static int dns_resolve_cancel_with_hash(struct dns_resolve_context *ctx,
 
 	ctx->queries[i].cb(DNS_EAI_CANCELED, NULL, ctx->queries[i].user_data);
 	ctx->queries[i].cb = NULL;
-
-fail:
-	k_mutex_unlock(&ctx->lock);
 
 	return 0;
 }
@@ -986,7 +964,8 @@ int dns_resolve_name(struct dns_resolve_context *ctx,
 
 		if (type == DNS_QUERY_TYPE_A) {
 			if (net_sin(&addr)->sin_family == AF_INET6) {
-				return -EPFNOSUPPORT;
+				ret = -EPFNOSUPPORT;
+				goto quit;
 			}
 
 			memcpy(net_sin(&info.ai_addr), net_sin(&addr),
@@ -1002,7 +981,8 @@ int dns_resolve_name(struct dns_resolve_context *ctx,
 			 * here so that we can find it easily.
 			 */
 			if (net_sin(&addr)->sin_family == AF_INET) {
-				return -EPFNOSUPPORT;
+				ret = -EPFNOSUPPORT;
+				goto quit;
 			}
 
 #if defined(CONFIG_NET_IPV6)
@@ -1012,7 +992,8 @@ int dns_resolve_name(struct dns_resolve_context *ctx,
 			info.ai_addr.sa_family = AF_INET6;
 			info.ai_addrlen = sizeof(struct sockaddr_in6);
 #else
-			return -EAFNOSUPPORT;
+			ret = -EAFNOSUPPORT;
+			goto quit;
 #endif
 		} else {
 			goto try_resolve;
@@ -1025,12 +1006,9 @@ int dns_resolve_name(struct dns_resolve_context *ctx,
 	}
 
 try_resolve:
-	k_mutex_lock(&ctx->lock, K_FOREVER);
-
 	i = get_cb_slot(ctx);
 	if (i < 0) {
-		ret = -EAGAIN;
-		goto fail;
+		return -EAGAIN;
 	}
 
 	ctx->queries[i].cb = cb;
@@ -1157,9 +1135,6 @@ quit:
 		net_buf_unref(dns_qname);
 	}
 
-fail:
-	k_mutex_unlock(&ctx->lock);
-
 	return ret;
 }
 
@@ -1170,8 +1145,6 @@ int dns_resolve_close(struct dns_resolve_context *ctx)
 	if (!ctx->is_used) {
 		return -ENOENT;
 	}
-
-	k_mutex_lock(&ctx->lock, K_FOREVER);
 
 	for (i = 0; i < SERVER_COUNT; i++) {
 		if (ctx->servers[i].net_ctx) {
@@ -1195,8 +1168,6 @@ int dns_resolve_close(struct dns_resolve_context *ctx)
 	}
 
 	ctx->is_used = false;
-
-	k_mutex_unlock(&ctx->lock);
 
 	return 0;
 }
