@@ -455,6 +455,15 @@ int32_t mdm_hl7800_polte_locate(void);
  */
 int32_t mdm_hl7800_perform_site_survey(void);
 
+/**
+ * @brief Set the log level for the modem.
+ *
+ * @param level 0 (None) - 4 (Debug)
+ *
+ * @param new level
+ */
+uint32_t mdm_hl7800_log_filter_set(uint32_t level);
+
 #ifdef __cplusplus
 }
 #endif
