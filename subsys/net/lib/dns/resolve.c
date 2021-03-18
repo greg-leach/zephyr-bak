@@ -992,7 +992,7 @@ int dns_resolve_name(struct dns_resolve_context *ctx,
 	bool mdns_query = false;
 	uint8_t hop_limit;
 
-	if (!ctx || !ctx->is_used || !query || !cb) {
+	if (!ctx || !query || !cb) {
 		return -EINVAL;
 	}
 
@@ -1053,6 +1053,11 @@ int dns_resolve_name(struct dns_resolve_context *ctx,
 
 try_resolve:
 	k_mutex_lock(&ctx->lock, K_FOREVER);
+
+	if (!ctx->is_used) {
+		ret = -EINVAL;
+		goto fail;
+	}
 
 	i = get_cb_slot(ctx);
 	if (i < 0) {
@@ -1190,15 +1195,14 @@ fail:
 	return ret;
 }
 
-int dns_resolve_close(struct dns_resolve_context *ctx)
+/* Must be invoked with context lock held */
+static int dns_resolve_close_locked(struct dns_resolve_context *ctx)
 {
 	int i;
 
 	if (!ctx->is_used) {
 		return -ENOENT;
 	}
-
-	k_mutex_lock(&ctx->lock, K_FOREVER);
 
 	for (i = 0; i < SERVER_COUNT; i++) {
 		if (ctx->servers[i].net_ctx) {
@@ -1223,9 +1227,18 @@ int dns_resolve_close(struct dns_resolve_context *ctx)
 
 	ctx->is_used = false;
 
+	return 0;
+}
+
+int dns_resolve_close(struct dns_resolve_context *ctx)
+{
+	int ret;
+
+	k_mutex_lock(&ctx->lock, K_FOREVER);
+	ret = dns_resolve_close_locked(ctx);
 	k_mutex_unlock(&ctx->lock);
 
-	return 0;
+	return ret;
 }
 
 struct dns_resolve_context *dns_resolve_get_default(void)
