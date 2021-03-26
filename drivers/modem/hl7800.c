@@ -257,7 +257,7 @@ static const struct mdm_control_pinconfig pinconfig[] = {
 
 #define MDM_MAX_DATA_LENGTH 1500
 #define MDM_MTU 1500
-#define MDM_MAX_RESP_SIZE 128
+#define MDM_MAX_RESP_SIZE 256
 
 #define MDM_HANDLER_MATCH_MAX_LEN 100
 
@@ -1581,6 +1581,7 @@ static bool on_cmd_atcmdinfo_ipaddr(struct net_buf **buf, uint16_t len)
 	char value[MDM_MAX_RESP_SIZE];
 	char *search_start, *addr_start, *sm_start, *gw_start, *dns_start;
 	struct in_addr new_ipv4_addr;
+	bool is_ipv4;
 	int ipv4_len;
 	char ipv4_addr_str[NET_IPV4_ADDR_LEN];
 	int sn_len;
@@ -1588,10 +1589,12 @@ static bool on_cmd_atcmdinfo_ipaddr(struct net_buf **buf, uint16_t len)
 	int gw_len;
 	char gw_str[NET_IPV4_ADDR_LEN];
 	int dns_len;
+	k_timeout_t delay;
 
 	out_len = net_buf_linearize(value, sizeof(value), *buf, 0, len);
 	value[out_len] = 0;
 	search_start = value;
+	LOG_DBG("IP info: %s", log_strdup(value));
 
 	/* find all delimiters (,) */
 	for (int i = 0; i < num_delims; i++) {
@@ -1605,93 +1608,106 @@ static bool on_cmd_atcmdinfo_ipaddr(struct net_buf **buf, uint16_t len)
 		search_start = delims[i] + 1;
 	}
 
-	/* Find start of subnet mask */
-	addr_start = delims[2] + 1;
-	num_delims = 4;
-	search_start = addr_start;
-	for (int i = 0; i < num_delims; i++) {
-		sm_start = strchr(search_start, '.');
-		if (!sm_start) {
-			LOG_ERR("Could not find submask start");
-			return true;
+	/* determine if IPv4 or IPv6 by checking length of ip address plus
+	 * gateway string.
+	 */
+	is_ipv4 = false;
+	ipv4_len = delims[3] - delims[2];
+	LOG_DBG("IP string len: %d", ipv4_len);
+	if (ipv4_len <= (NET_IPV4_ADDR_LEN * 2)) {
+		is_ipv4 = true;
+	}
+
+	if (is_ipv4) {
+		/* Find start of subnet mask */
+		addr_start = delims[2] + 1;
+		num_delims = 4;
+		search_start = addr_start;
+		for (int i = 0; i < num_delims; i++) {
+			sm_start = strchr(search_start, '.');
+			if (!sm_start) {
+				LOG_ERR("Could not find submask start");
+				return true;
+			}
+			/* Start next search after current delim location */
+			search_start = sm_start + 1;
 		}
-		/* Start next search after current delim location */
-		search_start = sm_start + 1;
-	}
 
-	/* get new IPv4 addr */
-	ipv4_len = sm_start - addr_start;
-	strncpy(ipv4_addr_str, addr_start, ipv4_len);
-	ipv4_addr_str[ipv4_len] = 0;
-	ret = net_addr_pton(AF_INET, ipv4_addr_str, &new_ipv4_addr);
-	if (ret < 0) {
-		LOG_ERR("Invalid IPv4 addr");
-		return true;
-	}
-
-	/* move past the '.' */
-	sm_start += 1;
-	/* store new subnet mask */
-	sn_len = delims[3] - sm_start;
-	strncpy(sm_str, sm_start, sn_len);
-	sm_str[sn_len] = 0;
-	ret = net_addr_pton(AF_INET, sm_str, &ictx.subnet);
-	if (ret < 0) {
-		LOG_ERR("Invalid subnet");
-		return true;
-	}
-
-	/* store new gateway */
-	gw_start = delims[3] + 1;
-	gw_len = delims[4] - gw_start;
-	strncpy(gw_str, gw_start, gw_len);
-	gw_str[gw_len] = 0;
-	ret = net_addr_pton(AF_INET, gw_str, &ictx.gateway);
-	if (ret < 0) {
-		LOG_ERR("Invalid gateway");
-		return true;
-	}
-
-	/* store new dns */
-	dns_start = delims[4] + 1;
-	dns_len = delims[5] - dns_start;
-	strncpy(ictx.dns_string, dns_start, dns_len);
-	ictx.dns_string[dns_len] = 0;
-	ret = net_addr_pton(AF_INET, ictx.dns_string, &ictx.dns);
-	if (ret < 0) {
-		LOG_ERR("Invalid dns");
-		return true;
-	}
-
-	if (ictx.iface) {
-		/* remove the current IPv4 addr before adding a new one.
-		 *  We dont care if it is successful or not.
-		 */
-		net_if_ipv4_addr_rm(ictx.iface, &ictx.ipv4Addr);
-
-		if (!net_if_ipv4_addr_add(ictx.iface, &new_ipv4_addr,
-					  NET_ADDR_DHCP, 0)) {
-			LOG_ERR("Cannot set iface IPv4 addr");
+		/* get new IPv4 addr */
+		ipv4_len = sm_start - addr_start;
+		strncpy(ipv4_addr_str, addr_start, ipv4_len);
+		ipv4_addr_str[ipv4_len] = 0;
+		ret = net_addr_pton(AF_INET, ipv4_addr_str, &new_ipv4_addr);
+		if (ret < 0) {
+			LOG_ERR("Invalid IPv4 addr");
 			return true;
 		}
 
-		net_if_ipv4_set_netmask(ictx.iface, &ictx.subnet);
-		net_if_ipv4_set_gw(ictx.iface, &ictx.gateway);
-
-		/* store the new IP addr */
-		net_ipaddr_copy(&ictx.ipv4Addr, &new_ipv4_addr);
-
-		/* start DNS update work */
-		k_timeout_t delay = K_NO_WAIT;
-		if (!ictx.initialized) {
-			/* Delay this in case the network
-			*  stack is still starting up */
-			delay = K_SECONDS(DNS_WORK_DELAY_SECS);
+		/* move past the '.' */
+		sm_start += 1;
+		/* store new subnet mask */
+		sn_len = delims[3] - sm_start;
+		strncpy(sm_str, sm_start, sn_len);
+		sm_str[sn_len] = 0;
+		ret = net_addr_pton(AF_INET, sm_str, &ictx.subnet);
+		if (ret < 0) {
+			LOG_ERR("Invalid subnet");
+			return true;
 		}
-		k_delayed_work_submit_to_queue(&hl7800_workq, &ictx.dns_work,
-					       delay);
-	} else {
-		LOG_ERR("iface NULL");
+
+		/* store new gateway */
+		gw_start = delims[3] + 1;
+		gw_len = delims[4] - gw_start;
+		strncpy(gw_str, gw_start, gw_len);
+		gw_str[gw_len] = 0;
+		ret = net_addr_pton(AF_INET, gw_str, &ictx.gateway);
+		if (ret < 0) {
+			LOG_ERR("Invalid gateway");
+			return true;
+		}
+
+		/* store new dns */
+		dns_start = delims[4] + 1;
+		dns_len = delims[5] - dns_start;
+		strncpy(ictx.dns_string, dns_start, dns_len);
+		ictx.dns_string[dns_len] = 0;
+		ret = net_addr_pton(AF_INET, ictx.dns_string, &ictx.dns);
+		if (ret < 0) {
+			LOG_ERR("Invalid dns");
+			return true;
+		}
+
+		if (ictx.iface) {
+			/* remove the current IPv4 addr before adding a new one.
+			 * We dont care if it is successful or not.
+			 */
+			net_if_ipv4_addr_rm(ictx.iface, &ictx.ipv4Addr);
+
+			if (!net_if_ipv4_addr_add(ictx.iface, &new_ipv4_addr,
+						  NET_ADDR_DHCP, 0)) {
+				LOG_ERR("Cannot set iface IPv4 addr");
+				return true;
+			}
+
+			net_if_ipv4_set_netmask(ictx.iface, &ictx.subnet);
+			net_if_ipv4_set_gw(ictx.iface, &ictx.gateway);
+
+			/* store the new IP addr */
+			net_ipaddr_copy(&ictx.ipv4Addr, &new_ipv4_addr);
+
+			/* start DNS update work */
+			delay = K_NO_WAIT;
+			if (!ictx.initialized) {
+				/* Delay this in case the network
+				 * stack is still starting up
+				 */
+				delay = K_SECONDS(DNS_WORK_DELAY_SECS);
+			}
+			k_delayed_work_submit_to_queue(&hl7800_workq,
+						       &ictx.dns_work, delay);
+		} else {
+			LOG_ERR("iface NULL");
+		}
 	}
 
 	/* TODO: IPv6 addr present, store it */
@@ -1708,7 +1724,7 @@ static bool on_cmd_atcmdinfo_operator_status(struct net_buf **buf, uint16_t len)
 	char *search_start;
 	int i;
 
-	out_len = net_buf_linearize(value, len, *buf, 0, len);
+	out_len = net_buf_linearize(value, sizeof(value), *buf, 0, len);
 	value[out_len] = 0;
 	LOG_INF("Operator: %s", log_strdup(value));
 
