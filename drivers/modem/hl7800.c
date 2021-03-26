@@ -1589,7 +1589,7 @@ static bool on_cmd_atcmdinfo_ipaddr(struct net_buf **buf, uint16_t len)
 	char gw_str[NET_IPV4_ADDR_LEN];
 	int dns_len;
 
-	out_len = net_buf_linearize(value, len, *buf, 0, len);
+	out_len = net_buf_linearize(value, sizeof(value), *buf, 0, len);
 	value[out_len] = 0;
 	search_start = value;
 
@@ -2622,7 +2622,7 @@ static bool on_cmd_sock_ind(struct net_buf **buf, uint16_t len)
 
 	ictx.last_error = 0;
 
-	out_len = net_buf_linearize(value, len, *buf, 0, len);
+	out_len = net_buf_linearize(value, sizeof(value), *buf, 0, len);
 	value[out_len] = 0;
 
 	/* find ',' because this is the format we expect */
@@ -2675,7 +2675,7 @@ static bool on_cmd_sock_error_code(struct net_buf **buf, uint16_t len)
 	char value[MDM_MAX_RESP_SIZE];
 	size_t out_len;
 
-	out_len = net_buf_linearize(value, len, *buf, 0, len);
+	out_len = net_buf_linearize(value, sizeof(value), *buf, 0, len);
 	value[out_len] = 0;
 
 	LOG_ERR("Error code: %s", log_strdup(value));
@@ -2731,7 +2731,7 @@ static bool on_cmd_sock_notif(struct net_buf **buf, uint16_t len)
 	bool trigger_sem = true;
 	int id;
 
-	out_len = net_buf_linearize(value, len, *buf, 0, len);
+	out_len = net_buf_linearize(value, sizeof(value), *buf, 0, len);
 	value[out_len] = 0;
 
 	/* find ',' because this is the format we expect */
@@ -2793,7 +2793,7 @@ static bool on_cmd_sockcreate(struct net_buf **buf, uint16_t len)
 	char value[MDM_MAX_RESP_SIZE];
 	struct hl7800_socket *sock = NULL;
 
-	out_len = net_buf_linearize(value, len, *buf, 0, len);
+	out_len = net_buf_linearize(value, sizeof(value), *buf, 0, len);
 	value[out_len] = 0;
 	ictx.last_socket_id = strtol(value, NULL, 10);
 	LOG_DBG("+K**PCFG: %d", ictx.last_socket_id);
