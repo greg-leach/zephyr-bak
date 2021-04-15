@@ -288,9 +288,39 @@ static inline int spi_nor_read_id(struct device *dev,
 		return -EIO;
 	}
 
-	if (memcmp(flash_id->id, buf, SPI_NOR_MAX_ID_LEN) != 0) {
-		return -ENODEV;
+// -------------------------------------------
+// ZEPHYR KERNEL v2.3.0 PATCH BY LCI FOR BT710
+// -------------------------------------------
+//  Remove verification of SPI flash ID check to support optional population of
+//  different flash parts without erroring out at the driver level.
+//  NOTE: This will require inspection of the spi_nor_config at the application
+//        level in order to determine the actual flash part populated if available
+//
+//	if (memcmp(flash_id->id, buf, SPI_NOR_MAX_ID_LEN) != 0) {
+//		return -ENODEV;
+//	}
+
+	return 0;
+}
+
+/**
+ * @brief Copy RDID buffer from the currently attached flash into the passed in buffer
+ * 
+ * @param dev The device structure
+ * @param outbuf The buffer to store the resulting SPI flash ID bytes to (must be at least SPI_NOR_MAX_ID_LEN bytes in size)
+ * @return 0 on success, negative errno code otherwise
+ */
+int spi_nor_get_id(struct device *dev, u8_t *outbuf)
+{
+	u8_t buf[SPI_NOR_MAX_ID_LEN];
+
+	if (spi_nor_cmd_read(dev, SPI_NOR_CMD_RDID, buf,
+	    SPI_NOR_MAX_ID_LEN) != 0) {
+		return -EIO;
 	}
+
+	LOG_DBG("SPI FLASH ID: %02x", buf[2]);
+	memcpy(outbuf, buf, SPI_NOR_MAX_ID_LEN);
 
 	return 0;
 }

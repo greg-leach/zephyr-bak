@@ -2375,7 +2375,7 @@ static int cmd_auth_oob_tk(const struct shell *shell, size_t argc, char *argv[])
 SHELL_STATIC_SUBCMD_SET_CREATE(bt_cmds,
 	SHELL_CMD_ARG(init, NULL, HELP_NONE, cmd_init, 1, 0),
 #if defined(CONFIG_BT_HCI)
-	SHELL_CMD_ARG(hci-cmd, NULL, "<ogf> <ocf> [data]", cmd_hci_cmd, 3, 1),
+	SHELL_CMD_ARG(hci-cmd, NULL, "<ogf> <ocf> [data]", cmd_hci_cmd, 3, 13),
 #endif
 	SHELL_CMD_ARG(id-create, NULL, "[addr]", cmd_id_create, 1, 1),
 	SHELL_CMD_ARG(id-reset, NULL, "<id> [addr]", cmd_id_reset, 2, 1),

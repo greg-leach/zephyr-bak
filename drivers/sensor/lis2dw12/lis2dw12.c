@@ -269,8 +269,10 @@ static int lis2dw12_init(struct device *dev)
 	}
 
 	if (wai != LIS2DW12_ID) {
-		LOG_ERR("Invalid chip ID");
+		//LOG_ERR("Invalid chip ID"); // PATCH BY LAIRD CONNECTIVITY - Suppress this error so EVT boards with LIS2DH populated do not display an error on startup
 		return -EINVAL;
+	} else {
+		LOG_INF("detected LIS2DW12");
 	}
 
 	/* reset device */

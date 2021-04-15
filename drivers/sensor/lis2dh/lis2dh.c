@@ -289,8 +289,10 @@ int lis2dh_init(struct device *dev)
 	}
 
 	if (id != LIS2DH_CHIP_ID) {
-		LOG_ERR("Invalid chip ID: %02x\n", id);
+		//LOG_ERR("LIS2DH not detected (chip ID: %02x)", id);
 		return -EINVAL;
+	} else {
+		LOG_INF("detected LIS2DH");
 	}
 
 	if (IS_ENABLED(DT_INST_PROP(0, disconnect_sdo_sa0_pull_up))) {

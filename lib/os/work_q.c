@@ -8,6 +8,11 @@
 #include <kernel.h>
 #define WORKQUEUE_THREAD_NAME	"workqueue"
 
+#define WDOG_FLAGS_SYSWORKQ 1
+void __weak set_watchdog_flags(u32_t flag)
+{
+}
+
 void z_work_q_main(void *work_q_ptr, void *p2, void *p3)
 {
 	struct k_work_q *work_q = work_q_ptr;
@@ -25,6 +30,8 @@ void z_work_q_main(void *work_q_ptr, void *p2, void *p3)
 		}
 
 		handler = work->handler;
+
+        set_watchdog_flags(WDOG_FLAGS_SYSWORKQ);
 
 		/* Reset pending state so it can be resubmitted by handler */
 		if (atomic_test_and_clear_bit(work->flags,

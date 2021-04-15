@@ -58,6 +58,8 @@ struct nrf_clock_control_config {
 					subsys[CLOCK_CONTROL_NRF_TYPE_COUNT];
 };
 
+static nrfx_power_pofwarn_event_handler_t nrfx_power_pof_event_callback = NULL;
+
 static void clkstarted_handle(struct device *dev,
 			      enum clock_control_nrf_type type);
 
@@ -436,6 +438,19 @@ void nrf_power_clock_isr(void *arg)
 	if (IS_ENABLED(CONFIG_CLOCK_CONTROL_NRF_K32SRC_RC_CALIBRATION)) {
 		z_nrf_clock_calibration_isr();
 	}
+    
+    if (nrf_power_event_get_and_clear(NRF_POWER, NRF_POWER_EVENT_POFWARN))
+    {
+        if(nrfx_power_pof_event_callback != NULL)
+        {
+            nrfx_power_pof_event_callback();
+        }
+    }
+}
+
+void nrf5_power_set_pof_callback(nrfx_power_pofwarn_event_handler_t cb)
+{
+    nrfx_power_pof_event_callback = cb;
 }
 
 #ifdef CONFIG_USB_NRFX

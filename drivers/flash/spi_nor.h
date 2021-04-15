@@ -22,6 +22,9 @@ struct spi_nor_config {
 	u32_t size;
 };
 
+/* Get the ID of the attached SPI flash at runtime */
+int spi_nor_get_id(struct device *dev, u8_t *outbuf);
+
 /* Status register bits */
 #define SPI_NOR_WIP_BIT         BIT(0)  /* Write in progress */
 #define SPI_NOR_WEL_BIT         BIT(1)  /* Write enable latch */

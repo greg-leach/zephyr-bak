@@ -71,6 +71,8 @@ enum clock_control_nrf_type {
 #define CLOCK_CONTROL_NRF_K32SRC_ACCURACY 7
 #endif
 
+typedef void (*nrfx_power_pofwarn_event_handler_t)(void);
+
 #if defined(CONFIG_USB_NRFX)
 void nrf5_power_usb_power_int_enable(bool enable);
 #endif
@@ -93,5 +95,10 @@ int z_nrf_clock_calibration_count(void);
  * @return Number of calibrations or -1 if feature is disabled.
  */
 int z_nrf_clock_calibration_skips_count(void);
+
+/** @brief Set the POF ISR callback function
+ *
+ */
+void nrf5_power_set_pof_callback(nrfx_power_pofwarn_event_handler_t cb);
 
 #endif /* ZEPHYR_INCLUDE_DRIVERS_CLOCK_CONTROL_NRF_CLOCK_CONTROL_H_ */

@@ -488,7 +488,7 @@ static int bme280_chip_init(struct device *dev)
 	}
 
 	err = bme280_reg_write(dev, BME280_REG_CTRL_MEAS,
-			       BME280_CTRL_MEAS_VAL);
+			       BME280_CTRL_MEAS_VAL & ~0x03);
 	if (err < 0) {
 		LOG_DBG("CTRL_MEAS write failed: %d", err);
 		return err;
