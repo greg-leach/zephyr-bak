@@ -79,6 +79,12 @@
 		reg = <0x76>;
 		label = "BME680";
 	};
+
+	extrtc0: mcp7940n@6F {
+		compatible = "microchip,mcp7940n";
+		reg = <0x6F>;
+		label = "mcp7940n";
+	};
 };
 
 &spi2 {
