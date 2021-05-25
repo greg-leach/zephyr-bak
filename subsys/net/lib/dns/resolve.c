@@ -938,6 +938,33 @@ static void query_timeout(struct k_work *work)
 {
 	struct dns_pending_query *pending_query =
 		CONTAINER_OF(work, struct dns_pending_query, timer);
+	int ret;
+
+	/* We have to take the lock as we're inspecting protected content
+	 * associated with the query.  But don't block the system work queue:
+	 * if the lock can't be taken immediately, reschedule the work item to
+	 * be run again after everything else has had a chance.
+	 *
+	 * Note that it's OK to use the k_work API on the delayable work
+	 * without holding the lock: it's only the associated state in the
+	 * containing structure that must be protected.
+	 */
+	ret = k_mutex_lock(&pending_query->ctx->lock, K_NO_WAIT);
+	if (ret != 0) {
+		struct k_delayed_work *dwork = (struct k_delayed_work *)work;
+
+		/*
+		 * Reschedule query timeout handler with some delay, so that all
+		 * threads (including those with lower priorities) have a chance
+		 * to move forward and release DNS context lock.
+		 *
+		 * Timeout value was arbitrarily chosen and can be updated in
+		 * future if needed.
+		 */
+		k_delayed_work_cancel(dwork);
+		k_delayed_work_submit(dwork, K_MSEC(10));
+		return;
+	}
 
 	NET_DBG("Query timeout DNS req %u type %d hash %u", pending_query->id,
 		pending_query->query_type, pending_query->query_hash);
