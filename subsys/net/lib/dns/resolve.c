@@ -182,8 +182,10 @@ static void dns_postprocess_server(struct dns_resolve_context *ctx, int idx)
 	}
 }
 
-int dns_resolve_init(struct dns_resolve_context *ctx, const char *servers[],
-		     const struct sockaddr *servers_sa[])
+/* Must be invoked with context lock held */
+static int dns_resolve_init_locked(struct dns_resolve_context *ctx,
+				   const char *servers[],
+				   const struct sockaddr *servers_sa[])
 {
 #if defined(CONFIG_NET_IPV6)
 	struct sockaddr_in6 local_addr6 = {
@@ -207,14 +209,10 @@ int dns_resolve_init(struct dns_resolve_context *ctx, const char *servers[],
 		return -ENOENT;
 	}
 
-	if (ctx->is_used) {
+	if (ctx->state != DNS_RESOLVE_CONTEXT_INACTIVE) {
 		ret = -ENOTEMPTY;
 		goto fail;
 	}
-
-	(void)memset(ctx, 0, sizeof(*ctx));
-
-	(void)k_mutex_init(&ctx->lock);
 
 	if (servers) {
 		for (i = 0; idx < SERVER_COUNT && servers[i]; i++) {
@@ -330,7 +328,7 @@ int dns_resolve_init(struct dns_resolve_context *ctx, const char *servers[],
 		goto fail;
 	}
 
-	ctx->is_used = true;
+	ctx->state = DNS_RESOLVE_CONTEXT_ACTIVE;
 	ctx->buf_timeout = DNS_BUF_TIMEOUT;
 	ret = 0;
 
@@ -338,6 +336,54 @@ fail:
 	return ret;
 }
 
+int dns_resolve_init(struct dns_resolve_context *ctx, const char *servers[],
+		     const struct sockaddr *servers_sa[])
+{
+	if (!ctx) {
+		return -ENOENT;
+	}
+
+	(void)memset(ctx, 0, sizeof(*ctx));
+
+	(void)k_mutex_init(&ctx->lock);
+	ctx->state = DNS_RESOLVE_CONTEXT_INACTIVE;
+
+	/* As this function is called only once during system init, there is no
+	 * reason to acquire lock.
+	 */
+	return dns_resolve_init_locked(ctx, servers, servers_sa);
+}
+
+/* Check whether a slot is available for use, or optionally whether it can be
+ * reclaimed.
+ *
+ * @param pending_query the query slot in question
+ *
+ * @param reclaim_if_available if the slot is marked in use, but the query has
+ * been completed and the work item is no longer pending, complete the release
+ * of the slot.
+ *
+ * @return true if and only if the slot can be used for a new query.
+ */
+static inline bool check_query_active(struct dns_pending_query *pending_query,
+				      bool reclaim_if_available)
+{
+	int ret = false;
+
+	if (pending_query->cb != NULL) {
+		ret = true;
+		if (reclaim_if_available
+		    && pending_query->query == NULL
+		    && k_delayed_work_pending(&pending_query->timer) == 0) {
+			pending_query->cb = NULL;
+			ret = false;
+		}
+	}
+
+	return ret;
+}
+
+/* Must be invoked with context lock held */
 static inline int get_cb_slot(struct dns_resolve_context *ctx)
 {
 	int i;
@@ -349,6 +395,49 @@ static inline int get_cb_slot(struct dns_resolve_context *ctx)
 	}
 
 	return -ENOENT;
+}
+
+/* Invoke the callback associated with a query slot, if still relevant.
+ *
+ * Must be invoked with context lock held.
+ *
+ * @param status the query status value
+ * @param info the query result structure
+ * @param pending_query the query slot that will provide the callback
+ **/
+static inline void invoke_query_callback(int status,
+					 struct dns_addrinfo *info,
+					 struct dns_pending_query *pending_query)
+{
+	/* Only notify if the slot is neither released nor in the process of
+	 * being released.
+	 */
+	if (pending_query->query != NULL)  {
+		pending_query->cb(status, info, pending_query->user_data);
+	}
+}
+
+/* Release a query slot reserved by get_cb_slot().
+ *
+ * Must be invoked with context lock held.
+ *
+ * @param pending_query the query slot to be released
+ */
+static void release_query(struct dns_pending_query *pending_query)
+{
+	int busy = k_delayed_work_cancel(&pending_query->timer);
+
+	/* If the work item is no longer pending we're done. */
+	if (busy == 0) {
+		/* All done. */
+		pending_query->cb = NULL;
+	} else {
+		/* Work item is still pending.  Set a secondary condition that
+		 * can be checked by get_cb_slot() to complete release of the
+		 * slot once the work item has been confirmed to be completed.
+		 */
+		pending_query->query = NULL;
+	}
 }
 
 static inline int get_slot_by_id(struct dns_resolve_context *ctx,
@@ -692,6 +781,10 @@ static void cb_recv(struct net_context *net_ctx,
 
 	k_mutex_lock(&ctx->lock, K_FOREVER);
 
+	if (ctx->state != DNS_RESOLVE_CONTEXT_ACTIVE) {
+		goto unlock;
+	}
+
 	if (status) {
 		ret = DNS_EAI_SYSTEM;
 		goto quit;
@@ -771,6 +864,7 @@ free_buf:
 		net_buf_unref(dns_cname);
 	}
 
+unlock:
 	k_mutex_unlock(&ctx->lock);
 }
 
@@ -850,32 +944,57 @@ static int dns_write(struct dns_resolve_context *ctx,
 	return 0;
 }
 
+/* Must be invoked with context lock held */
+static void dns_resolve_cancel_slot(struct dns_resolve_context *ctx, int slot)
+{
+	invoke_query_callback(DNS_EAI_CANCELED, NULL, &ctx->queries[slot]);
+
+	release_query(&ctx->queries[slot]);
+}
+
+/* Must be invoked with context lock held */
+static void dns_resolve_cancel_all(struct dns_resolve_context *ctx)
+{
+	int i;
+
+	for (i = 0; i < CONFIG_DNS_NUM_CONCUR_QUERIES; i++) {
+		if (ctx->queries[i].cb && ctx->queries[i].query) {
+			dns_resolve_cancel_slot(ctx, i);
+		}
+	}
+}
+
 static int dns_resolve_cancel_with_hash(struct dns_resolve_context *ctx,
 					uint16_t dns_id,
 					uint16_t query_hash,
 					const char *query_name)
 {
-	int ret;
+	int ret = 0;
 	int i;
 
 	k_mutex_lock(&ctx->lock, K_FOREVER);
 
+	if (ctx->state == DNS_RESOLVE_CONTEXT_DEACTIVATING) {
+		/*
+		 * Cancel is part of context "deactivating" process, so no need
+		 * to do anything more.
+		 */
+		goto unlock;
+	}
+
 	i = get_slot_by_id(ctx, dns_id, query_hash);
 	if (i < 0 || !ctx->queries[i].cb) {
 		ret = -ENOENT;
-		goto fail;
+		goto unlock;
 	}
 
 	NET_DBG("Cancelling DNS req %u (name %s type %d hash %u)", dns_id,
 		log_strdup(query_name), ctx->queries[i].query_type,
 		query_hash);
 
-	k_delayed_work_cancel(&ctx->queries[i].timer);
+	dns_resolve_cancel_slot(ctx, i);
 
-	ctx->queries[i].cb(DNS_EAI_CANCELED, NULL, ctx->queries[i].user_data);
-	ctx->queries[i].cb = NULL;
-
-fail:
+unlock:
 	k_mutex_unlock(&ctx->lock);
 
 	return 0;
@@ -1054,7 +1173,7 @@ int dns_resolve_name(struct dns_resolve_context *ctx,
 try_resolve:
 	k_mutex_lock(&ctx->lock, K_FOREVER);
 
-	if (!ctx->is_used) {
+	if (ctx->state != DNS_RESOLVE_CONTEXT_ACTIVE) {
 		ret = -EINVAL;
 		goto fail;
 	}
@@ -1200,9 +1319,22 @@ static int dns_resolve_close_locked(struct dns_resolve_context *ctx)
 {
 	int i;
 
-	if (!ctx->is_used) {
+	if (ctx->state != DNS_RESOLVE_CONTEXT_ACTIVE) {
 		return -ENOENT;
 	}
+
+	ctx->state = DNS_RESOLVE_CONTEXT_DEACTIVATING;
+
+	/* ctx->net_ctx is never used in "deactivating" state. Additionally
+	 * following code is guaranteed to be executed only by one thread at a
+	 * time, due to required "active" -> "deactivating" state change. This
+	 * means that it is safe to put net_ctx with mutex released.
+	 *
+	 * Released mutex will prevent lower networking layers from deadlock
+	 * when calling cb_recv() (which acquires ctx->lock) just before closing
+	 * network context.
+	 */
+	k_mutex_unlock(&ctx->lock);
 
 	for (i = 0; i < SERVER_COUNT; i++) {
 		if (ctx->servers[i].net_ctx) {
@@ -1222,10 +1354,13 @@ static int dns_resolve_close_locked(struct dns_resolve_context *ctx)
 			}
 
 			net_context_put(ctx->servers[i].net_ctx);
+			ctx->servers[i].net_ctx = NULL;
 		}
 	}
 
-	ctx->is_used = false;
+	k_mutex_lock(&ctx->lock, K_FOREVER);
+
+	ctx->state = DNS_RESOLVE_CONTEXT_INACTIVE;
 
 	return 0;
 }
@@ -1239,6 +1374,40 @@ int dns_resolve_close(struct dns_resolve_context *ctx)
 	k_mutex_unlock(&ctx->lock);
 
 	return ret;
+}
+
+int dns_resolve_reconfigure(struct dns_resolve_context *ctx,
+			    const char *servers[],
+			    const struct sockaddr *servers_sa[])
+{
+	int err;
+
+	if (!ctx) {
+		return -ENOENT;
+	}
+
+	k_mutex_lock(&ctx->lock, K_FOREVER);
+
+	if (ctx->state == DNS_RESOLVE_CONTEXT_DEACTIVATING) {
+		err = -EBUSY;
+		goto unlock;
+	}
+
+	if (ctx->state == DNS_RESOLVE_CONTEXT_ACTIVE) {
+		dns_resolve_cancel_all(ctx);
+
+		err = dns_resolve_close_locked(ctx);
+		if (err) {
+			goto unlock;
+		}
+	}
+
+	err = dns_resolve_init_locked(ctx, servers, servers_sa);
+
+unlock:
+	k_mutex_unlock(&ctx->lock);
+
+	return err;
 }
 
 struct dns_resolve_context *dns_resolve_get_default(void)
