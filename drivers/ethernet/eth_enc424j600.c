@@ -451,8 +451,7 @@ static void enc424j600_rx_thread(struct enc424j600_runtime *context)
 	while (true) {
 		k_sem_take(&context->int_sem, K_FOREVER);
 
-		enc424j600_clear_sfru(context->dev, ENC424J600_SFR3_EIEL,
-				      ENC424J600_EIE_INTIE);
+		enc424j600_write_sbc(context->dev, ENC424J600_1BC_CLREIE);
 		enc424j600_read_sfru(context->dev, ENC424J600_SFRX_EIRL, &eir);
 		enc424j600_read_sfru(context->dev,
 				     ENC424J600_SFRX_ESTATL, &estat);
@@ -485,11 +484,9 @@ static void enc424j600_rx_thread(struct enc424j600_runtime *context)
 			}
 		} else {
 			LOG_ERR("Unknown Interrupt, EIR: 0x%04x", eir);
-			continue;
 		}
 
-		enc424j600_set_sfru(context->dev, ENC424J600_SFR3_EIEL,
-				    ENC424J600_EIE_INTIE);
+		enc424j600_write_sbc(context->dev, ENC424J600_1BC_SETEIE);
 	}
 }
 
