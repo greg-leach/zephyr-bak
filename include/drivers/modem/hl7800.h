@@ -37,14 +37,11 @@ extern "C" {
 #define MDM_HL7800_APN_PASSWORD_MAX_SIZE 65
 
 #define MDM_HL7800_APN_MAX_STRLEN (MDM_HL7800_APN_MAX_SIZE - 1)
-#define MDM_HL7800_APN_USERNAME_MAX_STRLEN                                     \
-	(MDM_HL7800_APN_USERNAME_MAX_SIZE - 1)
-#define MDM_HL7800_APN_PASSWORD_MAX_STRLEN                                     \
-	(MDM_HL7800_APN_PASSWORD_MAX_SIZE - 1)
+#define MDM_HL7800_APN_USERNAME_MAX_STRLEN (MDM_HL7800_APN_USERNAME_MAX_SIZE - 1)
+#define MDM_HL7800_APN_PASSWORD_MAX_STRLEN (MDM_HL7800_APN_PASSWORD_MAX_SIZE - 1)
 
-#define MDM_HL7800_APN_CMD_MAX_SIZE                                            \
-	(32 + MDM_HL7800_APN_USERNAME_MAX_STRLEN +                             \
-	 MDM_HL7800_APN_PASSWORD_MAX_STRLEN)
+#define MDM_HL7800_APN_CMD_MAX_SIZE                                                                \
+	(32 + MDM_HL7800_APN_USERNAME_MAX_STRLEN + MDM_HL7800_APN_PASSWORD_MAX_STRLEN)
 
 #define MDM_HL7800_APN_CMD_MAX_STRLEN (MDM_HL7800_APN_CMD_MAX_SIZE - 1)
 
@@ -65,8 +62,7 @@ struct mdm_hl7800_apn {
 #define MDM_HL7800_IMSI_MAX_STRLEN (MDM_HL7800_IMSI_MAX_STR_SIZE - 1)
 
 #define MDM_HL7800_MODEM_FUNCTIONALITY_SIZE 2
-#define MDM_HL7800_MODEM_FUNCTIONALITY_STRLEN                                  \
-	(MDM_HL7800_MODEM_FUNCTIONALITY_SIZE - 1)
+#define MDM_HL7800_MODEM_FUNCTIONALITY_STRLEN (MDM_HL7800_MODEM_FUNCTIONALITY_SIZE - 1)
 
 struct mdm_hl7800_site_survey {
 	uint32_t tower_id;
@@ -161,8 +157,7 @@ struct mdm_hl7800_compound_event {
  * HL7800_EVENT_FOTA_COUNT - uint32_t
  * HL7800_EVENT_REVISION - string
  */
-typedef void (*mdm_hl7800_event_callback_t)(enum mdm_hl7800_event event,
-					    void *event_data);
+typedef void (*mdm_hl7800_event_callback_t)(enum mdm_hl7800_event event, void *event_data);
 
 /**
  * @brief Power off the HL7800
