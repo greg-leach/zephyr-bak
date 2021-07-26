@@ -9,8 +9,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#define DT_DRV_COMPAT ti_tca9538
-
 #include <errno.h>
 #include <kernel.h>
 #include <device.h>
@@ -21,14 +19,14 @@
 #include <sys/util.h>
 
 #include <logging/log.h>
-LOG_MODULE_REGISTER(tca9538, CONFIG_GPIO_LOG_LEVEL);
+LOG_MODULE_REGISTER(pca953x, CONFIG_GPIO_LOG_LEVEL);
 
 #include "gpio_utils.h"
 
-/* TCA9538 Register addresses */
-#define TCA9538_INPUT_PORT		0x00
-#define TCA9538_OUTPUT_PORT		0x01
-#define TCA9538_CONFIGURATION		0x03
+/* PCA953X Register addresses */
+#define PCA953X_INPUT_PORT		0x00
+#define PCA953X_OUTPUT_PORT		0x01
+#define PCA953X_CONFIGURATION		0x03
 
 /* Number of pins supported by the device */
 #define NUM_PINS 8
@@ -37,34 +35,33 @@ LOG_MODULE_REGISTER(tca9538, CONFIG_GPIO_LOG_LEVEL);
 #define ALL_PINS ((uint8_t)BIT_MASK(NUM_PINS))
 
 /** Cache of the output configuration and data of the pins. */
-struct tca9538_pin_state {
+struct pca953x_pin_state {
 	uint8_t dir;
 	uint8_t input;
 	uint8_t output;
-	uint8_t last_output;
 };
 
-struct tca9538_irq_state {
+struct pca953x_irq_state {
 	uint8_t rising;
 	uint8_t falling;
 };
 
 /** Runtime driver data */
-struct tca9538_drv_data {
+struct pca953x_drv_data {
 	/* gpio_driver_data needs to be first */
 	struct gpio_driver_data common;
-	struct tca9538_pin_state pin_state;
+	struct pca953x_pin_state pin_state;
 	struct k_sem lock;
 	struct gpio_callback gpio_cb;
 	struct k_work work;
-	struct tca9538_irq_state irq_state;
+	struct pca953x_irq_state irq_state;
 	const struct device *dev;
 	/* user ISR cb */
 	sys_slist_t cb;
 };
 
 /** Configuration data */
-struct tca9538_config {
+struct pca953x_config {
 	/* gpio_driver_config needs to be first */
 	struct gpio_driver_config common;
 	const struct device *i2c_dev;
@@ -74,7 +71,7 @@ struct tca9538_config {
 };
 
 /**
- * @brief Gets the state of input pins of the TCA9538 I/O Port and
+ * @brief Gets the state of input pins of the PCA953X I/O Port and
  * stores in driver data struct.
  *
  * @param dev Pointer to the device structure for the driver instance.
@@ -84,13 +81,13 @@ struct tca9538_config {
  */
 static int update_input(const struct device *dev)
 {
-	const struct tca9538_config *cfg = dev->config;
-	struct tca9538_drv_data *drv_data = dev->data;
+	const struct pca953x_config *cfg = dev->config;
+	struct pca953x_drv_data *drv_data = dev->data;
 	uint8_t input_states;
 	int rc = 0;
 
 	rc = i2c_reg_read_byte(cfg->i2c_dev, cfg->i2c_addr,
-				TCA9538_INPUT_PORT, &input_states);
+				PCA953X_INPUT_PORT, &input_states);
 
 	if (rc == 0) {
 		drv_data->pin_state.input = input_states;
@@ -99,7 +96,7 @@ static int update_input(const struct device *dev)
 }
 
 /**
- * @brief Handles interrupt triggered by the interrupt pin of TCA9538 I/O Port.
+ * @brief Handles interrupt triggered by the interrupt pin of PCA953X I/O Port.
  *
  * If nint_gpios is configured in device tree then this will be triggered each
  * time a gpio configured as an input changes state. The gpio input states are
@@ -107,10 +104,10 @@ static int update_input(const struct device *dev)
  *
  * @param dev Pointer to the device structure for the driver instance.
  */
-static void gpio_tca9538_handle_interrupt(const struct device *dev)
+static void gpio_pca953x_handle_interrupt(const struct device *dev)
 {
-	struct tca9538_drv_data *drv_data = dev->data;
-	struct tca9538_irq_state *irq_state = &drv_data->irq_state;
+	struct pca953x_drv_data *drv_data = dev->data;
+	struct pca953x_irq_state *irq_state = &drv_data->irq_state;
 	int rc;
 	uint8_t previous_state;
 	uint8_t current_state;
@@ -142,17 +139,6 @@ static void gpio_tca9538_handle_interrupt(const struct device *dev)
 	interrupt_status |= (irq_state->falling & transitioned_pins &
 			   previous_state);
 
-	/* Then what output pins have changed state */
-	transitioned_pins = drv_data->pin_state.last_output ^
-		drv_data->pin_state.output;
-
-	interrupt_status |= (irq_state->rising & transitioned_pins &
-			  drv_data->pin_state.output);
-	interrupt_status |= (irq_state->falling & transitioned_pins &
-			   drv_data->pin_state.last_output);
-
-	drv_data->pin_state.last_output = drv_data->pin_state.output;
-
 out:
 	k_sem_give(&drv_data->lock);
 
@@ -162,42 +148,42 @@ out:
 }
 
 /**
- * @brief Work handler for TCA9538 interrupt
+ * @brief Work handler for PCA953X interrupt
  *
  * @param work Work struct that contains pointer to interrupt handler function
  */
-static void gpio_tca9538_work_handler(struct k_work *work)
+static void gpio_pca953x_work_handler(struct k_work *work)
 {
-	struct tca9538_drv_data *drv_data =
-		CONTAINER_OF(work, struct tca9538_drv_data, work);
+	struct pca953x_drv_data *drv_data =
+		CONTAINER_OF(work, struct pca953x_drv_data, work);
 
-	gpio_tca9538_handle_interrupt(drv_data->dev);
+	gpio_pca953x_handle_interrupt(drv_data->dev);
 }
 
 /**
- * @brief ISR for intterupt pin of TCA9538
+ * @brief ISR for intterupt pin of PCA953X
  *
  * @param dev Pointer to the device structure for the driver instance.
  * @param gpio_cb Pointer to callback function struct
  * @param pins Bitmask of pins that triggered interrupt
  */
-static void gpio_tca9538_init_cb(const struct device *dev,
+static void gpio_pca953x_init_cb(const struct device *dev,
 				 struct gpio_callback *gpio_cb, uint32_t pins)
 {
-	struct tca9538_drv_data *drv_data =
-		CONTAINER_OF(gpio_cb, struct tca9538_drv_data, gpio_cb);
+	struct pca953x_drv_data *drv_data =
+		CONTAINER_OF(gpio_cb, struct pca953x_drv_data, gpio_cb);
 
 	ARG_UNUSED(pins);
 
 	k_work_submit(&drv_data->work);
 }
 
-static int gpio_tca9538_config(const struct device *dev, gpio_pin_t pin,
+static int gpio_pca953x_config(const struct device *dev, gpio_pin_t pin,
 			       gpio_flags_t flags)
 {
-	const struct tca9538_config *cfg = dev->config;
-	struct tca9538_drv_data *drv_data = dev->data;
-	struct tca9538_pin_state *pins = &drv_data->pin_state;
+	const struct pca953x_config *cfg = dev->config;
+	struct pca953x_drv_data *drv_data = dev->data;
+	struct pca953x_pin_state *pins = &drv_data->pin_state;
 	int rc = 0;
 	bool data_first = false;
 
@@ -211,7 +197,7 @@ static int gpio_tca9538_config(const struct device *dev, gpio_pin_t pin,
 	 * peripheral: strength defaults to low but can be set high,
 	 * and is controlled independently for output levels.
 	 *
-	 * The TCA9538 supports only high strength, and does not
+	 * The PCA953X supports only high strength, and does not
 	 * support different strengths for different levels.
 	 *
 	 * Until something more general is available reject any
@@ -226,8 +212,13 @@ static int gpio_tca9538_config(const struct device *dev, gpio_pin_t pin,
 		return -ENOTSUP;
 	}
 
-	/* The TCA9538 has no internal pull up support */
+	/* The PCA953X has no internal pull up support */
 	if (((flags & GPIO_PULL_UP) != 0) || ((flags & GPIO_PULL_DOWN) != 0)) {
+		return -ENOTSUP;
+	}
+
+	/* Simultaneous input & output mode not supported */
+	if (((flags & GPIO_INPUT) != 0) && ((flags & GPIO_OUTPUT) != 0)) {
 		return -ENOTSUP;
 	}
 
@@ -253,15 +244,13 @@ static int gpio_tca9538_config(const struct device *dev, gpio_pin_t pin,
 	/* Set output values */
 	if (data_first) {
 		rc = i2c_reg_write_byte(cfg->i2c_dev, cfg->i2c_addr,
-					TCA9538_OUTPUT_PORT, pins->output);
-		/* Store last output state here for use later */
-		pins->last_output = pins->output;
+					PCA953X_OUTPUT_PORT, pins->output);
 	}
 
 	if (rc == 0) {
 		/* Set pin directions */
 		rc = i2c_reg_write_byte(cfg->i2c_dev, cfg->i2c_addr,
-					TCA9538_CONFIGURATION, pins->dir);
+					PCA953X_CONFIGURATION, pins->dir);
 	}
 
 	if (rc == 0) {
@@ -274,11 +263,11 @@ out:
 	return rc;
 }
 
-static int gpio_tca9538_port_read(const struct device *dev,
+static int gpio_pca953x_port_read(const struct device *dev,
 				 gpio_port_value_t *value)
 {
-	const struct tca9538_config *cfg = dev->config;
-	struct tca9538_drv_data *drv_data = dev->data;
+	const struct pca953x_config *cfg = dev->config;
+	struct pca953x_drv_data *drv_data = dev->data;
 	uint8_t input_pin_data;
 	int rc = 0;
 
@@ -291,7 +280,7 @@ static int gpio_tca9538_port_read(const struct device *dev,
 
 	/* Read Input Register */
 	rc = i2c_reg_read_byte(cfg->i2c_dev, cfg->i2c_addr,
-				TCA9538_INPUT_PORT, &input_pin_data);
+				PCA953X_INPUT_PORT, &input_pin_data);
 
 	LOG_DBG("read %x got %d", input_pin_data, rc);
 
@@ -304,13 +293,13 @@ static int gpio_tca9538_port_read(const struct device *dev,
 	return rc;
 }
 
-static int gpio_tca9538_port_write(const struct device *dev,
+static int gpio_pca953x_port_write(const struct device *dev,
 				   gpio_port_pins_t mask,
 				   gpio_port_value_t value,
 				   gpio_port_value_t toggle)
 {
-	const struct tca9538_config *cfg = dev->config;
-	struct tca9538_drv_data *drv_data = dev->data;
+	const struct pca953x_config *cfg = dev->config;
+	struct pca953x_drv_data *drv_data = dev->data;
 	uint8_t *outp = &drv_data->pin_state.output;
 	int rc;
 	uint8_t orig_out;
@@ -323,14 +312,11 @@ static int gpio_tca9538_port_write(const struct device *dev,
 
 	k_sem_take(&drv_data->lock, K_FOREVER);
 
-	/* Don't store the updated output state here, rather
-	 * we wait until we get to the interrupt handler later
-	 */
 	orig_out = *outp;
 	out = ((orig_out & ~mask) | (value & mask)) ^ toggle;
 
 	rc = i2c_reg_write_byte(cfg->i2c_dev, cfg->i2c_addr,
-				TCA9538_OUTPUT_PORT, out);
+				PCA953X_OUTPUT_PORT, out);
 
 	if (rc == 0) {
 		*outp = out;
@@ -341,47 +327,42 @@ static int gpio_tca9538_port_write(const struct device *dev,
 	LOG_DBG("write %x msk %08x val %08x => %x: %d", orig_out, mask,
 		value, out, rc);
 
-	/* Trigger interrupt if any are enabled for the modified pins */
-	if (rc == 0) {
-		gpio_tca9538_handle_interrupt(dev);
-	}
-
 	return rc;
 }
 
-static int gpio_tca9538_port_set_masked(const struct device *dev,
+static int gpio_pca953x_port_set_masked(const struct device *dev,
 					gpio_port_pins_t mask,
 					gpio_port_value_t value)
 {
-	return gpio_tca9538_port_write(dev, mask, value, 0);
+	return gpio_pca953x_port_write(dev, mask, value, 0);
 }
 
-static int gpio_tca9538_port_set_bits(const struct device *dev,
+static int gpio_pca953x_port_set_bits(const struct device *dev,
 				      gpio_port_pins_t pins)
 {
-	return gpio_tca9538_port_write(dev, pins, pins, 0);
+	return gpio_pca953x_port_write(dev, pins, pins, 0);
 }
 
-static int gpio_tca9538_port_clear_bits(const struct device *dev,
+static int gpio_pca953x_port_clear_bits(const struct device *dev,
 					gpio_port_pins_t pins)
 {
-	return gpio_tca9538_port_write(dev, pins, 0, 0);
+	return gpio_pca953x_port_write(dev, pins, 0, 0);
 }
 
-static int gpio_tca9538_port_toggle_bits(const struct device *dev,
+static int gpio_pca953x_port_toggle_bits(const struct device *dev,
 					 gpio_port_pins_t pins)
 {
-	return gpio_tca9538_port_write(dev, 0, 0, pins);
+	return gpio_pca953x_port_write(dev, 0, 0, pins);
 }
 
-static int gpio_tca9538_pin_interrupt_configure(const struct device *dev,
+static int gpio_pca953x_pin_interrupt_configure(const struct device *dev,
 						gpio_pin_t pin,
 						enum gpio_int_mode mode,
 						enum gpio_int_trig trig)
 {
-	const struct tca9538_config *cfg = dev->config;
-	struct tca9538_drv_data *drv_data = dev->data;
-	struct tca9538_irq_state *irq = &drv_data->irq_state;
+	const struct pca953x_config *cfg = dev->config;
+	struct pca953x_drv_data *drv_data = dev->data;
+	struct pca953x_irq_state *irq = &drv_data->irq_state;
 
 	if (!cfg->interrupt_enabled) {
 		return -ENOTSUP;
@@ -414,17 +395,17 @@ static int gpio_tca9538_pin_interrupt_configure(const struct device *dev,
 	return 0;
 }
 
-static int gpio_tca9538_manage_callback(const struct device *dev,
+static int gpio_pca953x_manage_callback(const struct device *dev,
 					struct gpio_callback *callback,
 					bool set)
 {
-	struct tca9538_drv_data *data = dev->data;
+	struct pca953x_drv_data *data = dev->data;
 
 	return gpio_manage_callback(&data->cb, callback, set);
 }
 
 /**
- * @brief Initialization function of TCA9538
+ * @brief Initialization function of PCA953X
  *
  * This sets initial input/ output configuration and output states.
  * The interrupt is configured if this is enabled.
@@ -432,13 +413,11 @@ static int gpio_tca9538_manage_callback(const struct device *dev,
  * @param dev Device struct
  * @return 0 if successful, failed otherwise.
  */
-static int gpio_tca9538_init(const struct device *dev)
+static int gpio_pca953x_init(const struct device *dev)
 {
-	const struct tca9538_config *cfg = dev->config;
-	struct tca9538_drv_data *drv_data = dev->data;
+	const struct pca953x_config *cfg = dev->config;
+	struct pca953x_drv_data *drv_data = dev->data;
 	int rc = 0;
-
-	k_sem_take(&drv_data->lock, K_FOREVER);
 
 	if (!device_is_ready(cfg->i2c_dev)) {
 		LOG_ERR("I2C device not found");
@@ -462,7 +441,7 @@ static int gpio_tca9538_init(const struct device *dev)
 
 		drv_data->dev = dev;
 
-		k_work_init(&drv_data->work, gpio_tca9538_work_handler);
+		k_work_init(&drv_data->work, gpio_pca953x_work_handler);
 
 		rc = gpio_pin_configure_dt(&cfg->gpio_int, GPIO_INPUT);
 		if (rc) {
@@ -476,7 +455,7 @@ static int gpio_tca9538_init(const struct device *dev)
 		}
 
 		gpio_init_callback(&drv_data->gpio_cb,
-					gpio_tca9538_init_cb,
+					gpio_pca953x_init_cb,
 					BIT(cfg->gpio_int.pin));
 
 		rc = gpio_add_callback(cfg->gpio_int.port,
@@ -488,25 +467,22 @@ out:
 	} else {
 		LOG_INF("%s init ok", dev->name);
 	}
-	k_sem_give(&drv_data->lock);
 	return rc;
 }
 
 static const struct gpio_driver_api api_table = {
-	.pin_configure = gpio_tca9538_config,
-	.port_get_raw = gpio_tca9538_port_read,
-	.port_set_masked_raw = gpio_tca9538_port_set_masked,
-	.port_set_bits_raw = gpio_tca9538_port_set_bits,
-	.port_clear_bits_raw = gpio_tca9538_port_clear_bits,
-	.port_toggle_bits = gpio_tca9538_port_toggle_bits,
-	.pin_interrupt_configure = gpio_tca9538_pin_interrupt_configure,
-	.manage_callback = gpio_tca9538_manage_callback,
+	.pin_configure = gpio_pca953x_config,
+	.port_get_raw = gpio_pca953x_port_read,
+	.port_set_masked_raw = gpio_pca953x_port_set_masked,
+	.port_set_bits_raw = gpio_pca953x_port_set_bits,
+	.port_clear_bits_raw = gpio_pca953x_port_clear_bits,
+	.port_toggle_bits = gpio_pca953x_port_toggle_bits,
+	.pin_interrupt_configure = gpio_pca953x_pin_interrupt_configure,
+	.manage_callback = gpio_pca953x_manage_callback,
 };
 
-#define INST_DT_TCA9538(inst, t) DT_INST(inst, ti_tca9538##t)
-
-#define GPIO_TCA9538_INIT(n)							\
-	static const struct tca9538_config tca9538_cfg_##n = {			\
+#define GPIO_PCA953X_INIT(n)							\
+	static const struct pca953x_config pca953x_cfg_##n = {			\
 		.i2c_dev = DEVICE_DT_GET(DT_INST_BUS(n)),			\
 		.common = {							\
 			.port_pin_mask = GPIO_PORT_PIN_MASK_FROM_DT_INST(n),	\
@@ -518,19 +494,19 @@ static const struct gpio_driver_api api_table = {
 		.i2c_addr = DT_INST_REG_ADDR(n),				\
 	};									\
 										\
-	static struct tca9538_drv_data tca9538_drvdata_##n = {			\
-		.lock = Z_SEM_INITIALIZER(tca9538_drvdata_##n.lock, 1, 1),	\
+	static struct pca953x_drv_data pca953x_drvdata_##n = {			\
+		.lock = Z_SEM_INITIALIZER(pca953x_drvdata_##n.lock, 1, 1),	\
 		.pin_state.dir = ALL_PINS,					\
 		.pin_state.output = ALL_PINS,					\
-		.pin_state.last_output = ALL_PINS,				\
 	};									\
 	DEVICE_DT_INST_DEFINE(n,						\
-		gpio_tca9538_init,						\
+		gpio_pca953x_init,						\
 		NULL,								\
-		&tca9538_drvdata_##n,						\
-		&tca9538_cfg_##n,						\
+		&pca953x_drvdata_##n,						\
+		&pca953x_cfg_##n,						\
 		POST_KERNEL,							\
-		CONFIG_GPIO_TCA9538_INIT_PRIORITY,				\
+		CONFIG_GPIO_PCA953X_INIT_PRIORITY,				\
 		&api_table);
 
-DT_INST_FOREACH_STATUS_OKAY(GPIO_TCA9538_INIT)
+#define DT_DRV_COMPAT ti_tca9538
+DT_INST_FOREACH_STATUS_OKAY(GPIO_PCA953X_INIT)
