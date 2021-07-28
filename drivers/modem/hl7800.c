@@ -503,7 +503,6 @@ struct hl7800_iface_ctx {
 	bool mdm_startup_reporting_on;
 	int device_services_ind;
 	uint8_t operator_index;
-	struct mdm_hl7800_site_survey site_survey;
 	bool new_rat_cmd_support;
 	enum mdm_hl7800_functionality functionality;
 
@@ -1053,26 +1052,16 @@ int32_t mdm_hl7800_get_operator_index(void)
 	}
 }
 
-/**
- * @brief Perform a site survey.
- *
- */
-int32_t mdm_hl7800_perform_site_survey(struct mdm_hl7800_site_survey *survey)
+int32_t mdm_hl7800_perform_site_survey(void)
 {
 	int ret;
 
 	hl7800_lock();
 	wakeup_hl7800();
-	ictx.last_socket_id = 0;
 	ret = send_at_cmd(NULL, "at%meas=\"97\"", MDM_CMD_SEND_TIMEOUT, 0, false);
-	memcpy(survey, &ictx.site_survey, sizeof(*survey));
 	allow_sleep(true);
 	hl7800_unlock();
-	if (ret < 0) {
-		return ret;
-	} else {
-		return ictx.operator_index;
-	}
+	return ret;
 }
 
 int32_t mdm_hl7800_get_functionality(void)
@@ -3014,7 +3003,10 @@ done:
 	return true;
 }
 
-/* %MEAS: EARFCN=5826, CellID=420, RSRP=-99, RSRQ=-15 */
+/* There can be multiple responses from a single command.
+ * %MEAS: EARFCN=5826, CellID=420, RSRP=-99, RSRQ=-15
+ * %MEAS: EARFCN=6400, CellID=201, RSRP=-93, RSRQ=-21
+ */
 static bool on_cmd_survey_status(struct net_buf **buf, uint16_t len)
 {
 	struct net_buf *frag = NULL;
@@ -3022,6 +3014,7 @@ static bool on_cmd_survey_status(struct net_buf **buf, uint16_t len)
 	size_t out_len;
 	char *key;
 	char *value;
+	struct mdm_hl7800_site_survey site_survey;
 
 	wait_for_modem_data_and_newline(buf, net_buf_frags_len(*buf), sizeof(response));
 
@@ -3041,7 +3034,7 @@ static bool on_cmd_survey_status(struct net_buf **buf, uint16_t len)
 		goto done;
 	} else {
 		value += strlen(key);
-		ictx.site_survey.tower_id = strtoul(value, NULL, 10);
+		site_survey.earfcn = strtoul(value, NULL, 10);
 	}
 
 	key = "CellID=";
@@ -3050,7 +3043,7 @@ static bool on_cmd_survey_status(struct net_buf **buf, uint16_t len)
 		goto done;
 	} else {
 		value += strlen(key);
-		ictx.site_survey.cell_id = strtoul(value, NULL, 10);
+		site_survey.cell_id = strtoul(value, NULL, 10);
 	}
 
 	key = "RSRP=";
@@ -3059,7 +3052,7 @@ static bool on_cmd_survey_status(struct net_buf **buf, uint16_t len)
 		goto done;
 	} else {
 		value += strlen(key);
-		ictx.site_survey.rsrp = strtol(value, NULL, 10);
+		site_survey.rsrp = strtol(value, NULL, 10);
 	}
 
 	key = "RSRQ=";
@@ -3068,8 +3061,10 @@ static bool on_cmd_survey_status(struct net_buf **buf, uint16_t len)
 		goto done;
 	} else {
 		value += strlen(key);
-		ictx.site_survey.rsrq = strtol(value, NULL, 10);
+		site_survey.rsrq = strtol(value, NULL, 10);
 	}
+
+	event_handler(HL7800_EVENT_SITE_SURVEY, &site_survey);
 
 done:
 	return true;
