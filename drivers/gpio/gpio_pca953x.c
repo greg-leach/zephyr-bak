@@ -488,9 +488,7 @@ static const struct gpio_driver_api api_table = {
 			.port_pin_mask = GPIO_PORT_PIN_MASK_FROM_DT_INST(n),	\
 		},								\
 		.interrupt_enabled = DT_INST_NODE_HAS_PROP(n, nint_gpios),	\
-		IF_ENABLED(DT_INST_NODE_HAS_PROP(n, nint_gpios), (		\
-		.gpio_int = GPIO_DT_SPEC_INST_GET(n, nint_gpios),		\
-		))								\
+		.gpio_int = GPIO_DT_SPEC_INST_GET_OR(n, nint_gpios, {0}),	\
 		.i2c_addr = DT_INST_REG_ADDR(n),				\
 	};									\
 										\
