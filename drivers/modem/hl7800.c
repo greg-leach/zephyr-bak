@@ -1253,6 +1253,7 @@ void mdm_hl7800_generate_status_events(void)
 	hl7800_unlock();
 }
 
+#ifdef CONFIG_LOG
 /** @ref /zephyr/samples/subsys/logging/logger/src/main.c */
 static int log_source_id_get(const char *name)
 {
@@ -1264,6 +1265,7 @@ static int log_source_id_get(const char *name)
 	}
 	return -1;
 }
+#endif
 
 uint32_t mdm_hl7800_log_filter_set(uint32_t level)
 {
