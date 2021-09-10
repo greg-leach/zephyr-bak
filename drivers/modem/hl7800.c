@@ -148,7 +148,6 @@ enum mdm_control_pins {
 	MDM_WAKE,
 	MDM_PWR_ON,
 	MDM_FAST_SHUTD,
-	MDM_UART_DTR,
 	MDM_VGPIO,
 	MDM_UART_DSR,
 	MDM_UART_CTS,
@@ -204,10 +203,6 @@ static const struct mdm_control_pinconfig pinconfig[] = {
 	PINCONFIG(DT_INST_GPIO_LABEL(0, mdm_fast_shutd_gpios),
 		  DT_INST_GPIO_PIN(0, mdm_fast_shutd_gpios), (GPIO_OUTPUT | GPIO_OPEN_DRAIN)),
 
-	/* MDM_UART_DTR */
-	PINCONFIG(DT_INST_GPIO_LABEL(0, mdm_uart_dtr_gpios),
-		  DT_INST_GPIO_PIN(0, mdm_uart_dtr_gpios), GPIO_OUTPUT),
-
 	/* MDM_VGPIO */
 	PINCONFIG(DT_INST_GPIO_LABEL(0, mdm_vgpio_gpios), DT_INST_GPIO_PIN(0, mdm_vgpio_gpios),
 		  (GPIO_INPUT | GPIO_INT_EDGE_BOTH)),
@@ -235,8 +230,6 @@ static const struct mdm_control_pinconfig pinconfig[] = {
 #define MDM_PWR_ON_NOT_ASSERTED 1
 #define MDM_FAST_SHUTD_ASSERTED 0
 #define MDM_FAST_SHUTD_NOT_ASSERTED 1
-#define MDM_UART_DTR_ASSERTED 0 /* Asserted keeps the module awake */
-#define MDM_UART_DTR_NOT_ASSERTED 1
 
 #define MDM_SEND_OK_ENABLED 0
 #define MDM_SEND_OK_DISABLED 1
@@ -793,26 +786,12 @@ static void modem_assert_fast_shutd(bool assert)
 	}
 }
 
-static void modem_assert_uart_dtr(bool assert)
-{
-	if (assert) {
-		HL7800_IO_DBG_LOG("MDM_UART_DTR -> ASSERTED");
-		gpio_pin_set(ictx.gpio_port_dev[MDM_UART_DTR], pinconfig[MDM_UART_DTR].pin,
-			     MDM_UART_DTR_ASSERTED);
-	} else {
-		HL7800_IO_DBG_LOG("MDM_UART_DTR -> NOT_ASSERTED");
-		gpio_pin_set(ictx.gpio_port_dev[MDM_UART_DTR], pinconfig[MDM_UART_DTR].pin,
-			     MDM_UART_DTR_NOT_ASSERTED);
-	}
-}
-
 static void allow_sleep_work_callback(struct k_work *item)
 {
 	ARG_UNUSED(item);
 	LOG_DBG("Allow sleep");
 	ictx.allow_sleep = true;
 	modem_assert_wake(false);
-	modem_assert_uart_dtr(false);
 }
 
 static void allow_sleep(bool allow)
@@ -826,7 +805,6 @@ static void allow_sleep(bool allow)
 		k_work_cancel_delayable(&ictx.allow_sleep_work);
 		ictx.allow_sleep = false;
 		modem_assert_wake(true);
-		modem_assert_uart_dtr(true);
 	}
 #endif
 }
@@ -4213,7 +4191,6 @@ static void prepare_io_for_reset(void)
 {
 	HL7800_IO_DBG_LOG("Preparing IO for reset/sleep");
 	shutdown_uart();
-	modem_assert_uart_dtr(true);
 	modem_assert_wake(false);
 	modem_assert_pwr_on(false);
 	modem_assert_fast_shutd(false);
@@ -5495,7 +5472,6 @@ static int hl7800_init(const struct device *dev)
 	ictx.uart_on = true;
 
 	modem_assert_wake(false);
-	modem_assert_uart_dtr(false);
 	modem_assert_pwr_on(false);
 	modem_assert_fast_shutd(false);
 
