@@ -3507,7 +3507,7 @@ static bool on_cmd_sock_error_code(struct net_buf **buf, uint16_t len)
 	out_len = net_buf_linearize(value, sizeof(value), *buf, 0, len);
 	value[out_len] = 0;
 
-	LOG_ERR("Error code: %s", log_strdup(value));
+	LOG_ERR("Sock Error code: %s", log_strdup(value));
 
 	ictx.last_error = -EIO;
 	sock = socket_from_id(ictx.last_socket_id);
