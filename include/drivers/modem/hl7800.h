@@ -464,6 +464,13 @@ int32_t mdm_hl7800_perform_site_survey(void);
  */
 uint32_t mdm_hl7800_log_filter_set(uint32_t level);
 
+/**
+ * @brief Read the operator index from the modem.
+ *
+ * @param operator index
+ */
+int32_t mdm_hl7800_get_operator_index(void);
+
 #ifdef __cplusplus
 }
 #endif
