@@ -478,7 +478,6 @@ void z_shell_fprintf(const struct shell *shell,
 			    const char *fmt, ...)
 {
 	__ASSERT_NO_MSG(shell);
-	__ASSERT(!k_is_in_isr(), "Thread context required.");
 	__ASSERT_NO_MSG(shell->ctx);
 	__ASSERT_NO_MSG(shell->fprintf_ctx);
 	__ASSERT_NO_MSG(fmt);
