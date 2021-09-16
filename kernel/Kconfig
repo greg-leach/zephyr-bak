@@ -516,7 +516,7 @@ config HEAP_MEM_POOL_SIZE
 	  means that no heap memory pool is defined.
 
 config ENABLE_HEAP_DEBUGGING
-	bool
+	bool "Enable heap debugging"
 	default n
 	help
 	  Enable to print heap memory information on every allocation or
