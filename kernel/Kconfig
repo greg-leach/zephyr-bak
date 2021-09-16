@@ -515,6 +515,16 @@ config HEAP_MEM_POOL_SIZE
 	  the memory pool is only limited to available memory. A size of zero
 	  means that no heap memory pool is defined.
 
+config ENABLE_HEAP_DEBUGGING
+	bool
+	default n
+	help
+	  Enable to print heap memory information on every allocation or
+	  free operation which includes available free memory on the heap,
+	  minimal free heap space since startup and contiguous heap memory
+	  details. This should only be enabled for debugging and profiling as
+	  it will generate a lot of verbose information and adds CPU strain.
+
 endif # KERNEL_MEM_POOL
 
 endmenu

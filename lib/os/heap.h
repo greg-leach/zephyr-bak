@@ -69,6 +69,16 @@ struct z_heap {
 	chunkid_t chunk0_hdr[2];
 	chunkid_t end_chunk;
 	uint32_t avail_buckets;
+
+#if defined(CONFIG_ENABLE_HEAP_DEBUGGING)
+	uint32_t avail_chunks;
+	uint32_t avail_chunks_min;
+
+	chunkid_t top_available;
+	uint32_t avail_contig;
+	uint32_t avail_contig_min;
+#endif
+
 	struct z_heap_bucket buckets[0];
 };
 
@@ -137,6 +147,17 @@ static inline void set_chunk_used(struct z_heap *h, chunkid_t c, bool used)
 {
 	chunk_unit_t *buf = chunk_buf(h);
 	void *cmem = &buf[c];
+
+#if defined(CONFIG_ENABLE_HEAP_DEBUGGING)
+	if (used) {
+		h->avail_chunks -= chunk_size(h, c);
+		if (h->avail_chunks < h->avail_chunks_min) {
+			h->avail_chunks_min = h->avail_chunks;
+		}
+	} else {
+		h->avail_chunks += chunk_size(h, c);
+	}
+#endif
 
 	if (big_heap(h)) {
 		if (used) {
@@ -253,5 +274,8 @@ static inline bool size_too_big(struct z_heap *h, size_t bytes)
 
 /* For debugging */
 void heap_print_info(struct z_heap *h, bool dump_chunks);
+#if defined(CONFIG_ENABLE_HEAP_DEBUGGING)
+void heap_print_stats(struct z_heap *h);
+#endif
 
 #endif /* ZEPHYR_INCLUDE_LIB_OS_HEAP_H_ */

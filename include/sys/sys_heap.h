@@ -61,6 +61,15 @@ struct z_heap_stress_result {
 	uint64_t accumulated_in_use_bytes;
 };
 
+#if defined(CONFIG_ENABLE_HEAP_DEBUGGING)
+struct sys_heap_stats {
+	uint32_t avail_chunks;
+	uint32_t avail_chunks_min;
+	uint32_t avail_contig;
+	uint32_t avail_contig_min;
+};
+#endif
+
 /** @brief Initialize sys_heap
  *
  * Initializes a sys_heap struct to manage the specified memory.
@@ -210,5 +219,26 @@ void sys_heap_stress(void *(*alloc_fn)(void *arg, size_t bytes),
  * @param dump_chunks True to print the entire heap chunk list
  */
 void sys_heap_print_info(struct sys_heap *heap, bool dump_chunks);
+
+#if defined(CONFIG_ENABLE_HEAP_DEBUGGING)
+/** @brief Print heap structure availability statistics to the console
+ *
+ * Prints a line detailing available heap memory and contiguous available heap
+ * memory, including historical minimums.
+ *
+ * @param h Heap to print information about
+ */
+void sys_heap_print_stats(struct sys_heap *h);
+
+/** @brief Write heap structure availability statistics to a struct
+ *
+ * Fills a struct detailing available heap memory and contiguous available heap
+ * memory, including historical minimums.
+ *
+ * @param h Heap to get information about
+ * @param stats struct to fill
+ */
+void sys_heap_get_stats(struct sys_heap *h, struct sys_heap_stats *stats);
+#endif
 
 #endif /* ZEPHYR_INCLUDE_SYS_SYS_HEAP_H_ */
