@@ -26,7 +26,6 @@
 static struct bt_le_ext_adv adv_pool[CONFIG_BT_EXT_ADV_MAX_ADV_SET];
 #endif /* defined(CONFIG_BT_EXT_ADV) */
 
-
 #if defined(CONFIG_BT_EXT_ADV)
 uint8_t bt_le_ext_adv_get_index(struct bt_le_ext_adv *adv)
 {
@@ -378,8 +377,13 @@ static int hci_set_ad_ext(struct bt_le_ext_adv *adv, uint16_t hci_op,
 	set_data = net_buf_add(buf, sizeof(*set_data));
 	(void)memset(set_data, 0, sizeof(*set_data));
 
-	err = set_data_add(set_data->data, BT_HCI_LE_EXT_ADV_FRAG_MAX_LEN,
+	err = set_data_add(set_data->data,
+			   (((*adv->flags) & BT_LE_ADV_OPT_EXT_ADV) !=
+			   BT_LE_ADV_OPT_EXT_ADV ?
+				BT_GAP_ADV_MAX_ADV_DATA_LEN :
+				BT_HCI_LE_EXT_ADV_FRAG_MAX_LEN),
 			   ad, ad_len, &set_data->len);
+
 	if (err) {
 		net_buf_unref(buf);
 		return err;
