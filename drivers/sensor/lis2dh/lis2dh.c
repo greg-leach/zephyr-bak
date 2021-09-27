@@ -510,11 +510,17 @@ int lis2dh_init(const struct device *dev)
 		    (GPIO_DT_SPEC_INST_GET_BY_IDX(id, prop, idx)),	\
 		    ({.port = NULL, .pin = 0, .dt_flags = 0}))
 
+#ifdef CONFIG_LIS2DH_ANYM_ON_INT1
+#define LIS2DH_CFG_INT(inst) \
+	.gpio_int =							\
+	    GPIO_DT_SPEC_INST_GET_BY_IDX_COND(inst, irq_gpios, 0),
+#else
 #define LIS2DH_CFG_INT(inst) \
 	.gpio_drdy =							\
 	    GPIO_DT_SPEC_INST_GET_BY_IDX_COND(inst, irq_gpios, 0),	\
 	.gpio_int =							\
 	    GPIO_DT_SPEC_INST_GET_BY_IDX_COND(inst, irq_gpios, 1),
+#endif
 #else
 #define LIS2DH_CFG_INT(inst)
 #endif /* CONFIG_LIS2DH_TRIGGER */

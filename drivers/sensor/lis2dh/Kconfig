@@ -152,4 +152,8 @@ config LIS2DH_MEASURE_TEMPERATURE
 		to the result. The offset can be obtained by comparing the
 		the reported temperature to a reference.
 
+config LIS2DH_ANYM_ON_INT1
+	bool "Configure any movement to use interrupt 1 instead of 2"
+	depends on LIS2DH_TRIGGER
+
 endif # LIS2DH
