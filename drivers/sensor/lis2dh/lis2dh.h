@@ -117,11 +117,15 @@
 
 #define LIS2DH_REG_CTRL5		0x24
 #define LIS2DH_LIR_INT2_SHIFT		1
+#define LIS2DH_LIR_INT1_SHIFT		3
 #define LIS2DH_EN_LIR_INT2		BIT(LIS2DH_LIR_INT2_SHIFT)
+#define LIS2DH_EN_LIR_INT1		BIT(LIS2DH_LIR_INT1_SHIFT)
 
 #define LIS2DH_REG_CTRL6		0x25
 #define LIS2DH_EN_INT2_INT2_SHIFT	5
 #define LIS2DH_EN_INT2_INT2		BIT(LIS2DH_EN_INT2_INT2_SHIFT)
+#define LIS2DH_EN_INT1_INT1_SHIFT	6
+#define LIS2DH_EN_INT1_INT1		BIT(LIS2DH_EN_INT1_INT1_SHIFT)
 
 #define LIS2DH_REG_REFERENCE		0x26
 
@@ -144,21 +148,22 @@
 #define LIS2DH_REG_ACCEL_Y_MSB		0x2B
 #define LIS2DH_REG_ACCEL_Z_MSB		0x2D
 
-#define LIS2DH_REG_INT1_CFG		0x30
-#define LIS2DH_REG_INT2_CFG		0x34
-#define LIS2DH_AOI_CFG			BIT(7)
+#define LIS2DH_REG_INT1_CFG        0x30
+#define LIS2DH_REG_INT1_SRC        0x31
+#define LIS2DH_REG_INT1_THS        0x32
+#define LIS2DH_REG_INT1_DUR        0x33
+#define LIS2DH_REG_INT2_CFG        0x34
+#define LIS2DH_REG_INT2_SRC        0x35
+#define LIS2DH_REG_INT2_THS        0x36
+#define LIS2DH_REG_INT2_DUR        0x37
+
+#define LIS2DH_AOI_CFG			    BIT(7)
 #define LIS2DH_INT_CFG_ZHIE_ZUPE	BIT(5)
 #define LIS2DH_INT_CFG_ZLIE_ZDOWNE	BIT(4)
 #define LIS2DH_INT_CFG_YHIE_YUPE	BIT(3)
 #define LIS2DH_INT_CFG_YLIE_YDOWNE	BIT(2)
 #define LIS2DH_INT_CFG_XHIE_XUPE	BIT(1)
 #define LIS2DH_INT_CFG_XLIE_XDOWNE	BIT(0)
-
-#define LIS2DH_REG_INT2_SRC		0x35
-
-#define LIS2DH_REG_INT2_THS		0x36
-
-#define LIS2DH_REG_INT2_DUR		0x37
 
 /* sample buffer size includes status register */
 #define LIS2DH_BUF_SZ			7
@@ -207,6 +212,7 @@ struct lis2dh_config {
 #endif /* CONFIG_LIS2DH_TRIGGER */
 	bool is_lsm303agr_dev;
 	bool disc_pull_up;
+	bool anym_on_int1;
 #ifdef CONFIG_LIS2DH_MEASURE_TEMPERATURE
 	const struct temperature temperature;
 #endif

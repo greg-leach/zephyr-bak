@@ -455,6 +455,9 @@ int lis2dh_init(const struct device *dev)
 #define DISC_PULL_UP(inst) \
 	DT_INST_PROP(inst, disconnect_sdo_sa0_pull_up)
 
+#define ANYM_ON_INT1(inst) \
+	DT_INST_PROP(inst, anym_on_int1)
+
 /*
  * Instantiation macros used when a device is on a SPI bus.
  */
@@ -503,11 +506,15 @@ int lis2dh_init(const struct device *dev)
 		    (GPIO_DT_SPEC_INST_GET_BY_IDX(id, prop, idx)),	\
 		    ({.port = NULL, .pin = 0, .dt_flags = 0}))
 
-#define LIS2DH_CFG_INT(inst) \
+#define LIS2DH_CFG_INT(inst)				\
 	.gpio_drdy =							\
-	    GPIO_DT_SPEC_INST_GET_BY_IDX_COND(inst, irq_gpios, 0),	\
-	.gpio_int =							\
-	    GPIO_DT_SPEC_INST_GET_BY_IDX_COND(inst, irq_gpios, 1),
+	    COND_CODE_1(ANYM_ON_INT1(inst),		\
+		({.port = NULL, .pin = 0, .dt_flags = 0}),                  \
+		(GPIO_DT_SPEC_INST_GET_BY_IDX_COND(inst, irq_gpios, 0))),	\
+	.gpio_int =								\
+	    COND_CODE_1(ANYM_ON_INT1(inst),		\
+		(GPIO_DT_SPEC_INST_GET_BY_IDX_COND(inst, irq_gpios, 0)),	\
+		(GPIO_DT_SPEC_INST_GET_BY_IDX_COND(inst, irq_gpios, 1))),
 #else
 #define LIS2DH_CFG_INT(inst)
 #endif /* CONFIG_LIS2DH_TRIGGER */
@@ -543,6 +550,7 @@ int lis2dh_init(const struct device *dev)
 		.bus_cfg = { .spi_cfg = LIS2DH_SPI_CFG(inst)	},	\
 		.is_lsm303agr_dev = IS_LSM303AGR_DEV(inst),		\
 		.disc_pull_up = DISC_PULL_UP(inst),			\
+		.anym_on_int1 = ANYM_ON_INT1(inst),			\
 		LIS2DH_CFG_TEMPERATURE(inst)				\
 		LIS2DH_CFG_INT(inst)					\
 	}
@@ -565,6 +573,7 @@ int lis2dh_init(const struct device *dev)
 		.bus_cfg = { .i2c_slv_addr = DT_INST_REG_ADDR(inst), },	\
 		.is_lsm303agr_dev = IS_LSM303AGR_DEV(inst),		\
 		.disc_pull_up = DISC_PULL_UP(inst),			\
+		.anym_on_int1 = ANYM_ON_INT1(inst),			\
 		LIS2DH_CFG_TEMPERATURE(inst)				\
 		LIS2DH_CFG_INT(inst)					\
 	}
