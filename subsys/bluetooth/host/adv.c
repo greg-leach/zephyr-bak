@@ -378,10 +378,9 @@ static int hci_set_ad_ext(struct bt_le_ext_adv *adv, uint16_t hci_op,
 	(void)memset(set_data, 0, sizeof(*set_data));
 
 	err = set_data_add(set_data->data,
-			   (((*adv->flags) & BT_LE_ADV_OPT_EXT_ADV) !=
-			   BT_LE_ADV_OPT_EXT_ADV ?
-				BT_GAP_ADV_MAX_ADV_DATA_LEN :
-				BT_HCI_LE_EXT_ADV_FRAG_MAX_LEN),
+			   (atomic_test_bit(adv->flags, BT_ADV_EXT_ADV) ?
+				BT_HCI_LE_EXT_ADV_FRAG_MAX_LEN :
+				BT_GAP_ADV_MAX_ADV_DATA_LEN),
 			   ad, ad_len, &set_data->len);
 
 	if (err) {
