@@ -1,5 +1,6 @@
 # Copyright Runtime.io 2018. All rights reserved.
 # Copyright Nordic Semiconductor ASA 2020. All rights reserved.
+# Copyright Laird Connectivity 2021. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 menuconfig MCUMGR
@@ -229,15 +230,36 @@ config MCUMGR_SMP_BT
 	help
 	  Enables handling of SMP commands received over Bluetooth.
 
-config MCUMGR_SMP_BT_AUTHEN
-	bool "Authenticated requirement for Bluetooth mcumgr SMP transport"
+if MCUMGR_SMP_BT
+
+choice MCUMGR_SMP_BT_SECURITY_TYPE
+	prompt "Bluetooth mcumgr security requirement"
+	default MCUMGR_SMP_BT_OPEN
+	help
+	  Security level required to access SMP over BT..
+
+config MCUMGR_SMP_BT_OPEN
+	bool "Open"
+	help
+	  No encryption or authentication required for SMP over BT to be used.
+
+config MCUMGR_SMP_BT_ENCRYPTED
+	bool "Encrypted"
 	depends on MCUMGR_SMP_BT
 	select BT_SMP
-	default y
 	help
-	  Enables encrypted and authenticated connection requirement to
-	  Bluetooth SMP transport.
+	  Requires an encrypted connection for SMP over BT to be used.
 
+config MCUMGR_SMP_BT_AUTHENTICATED
+	bool "Authenticated"
+	depends on MCUMGR_SMP_BT
+	select BT_SMP
+	help
+	  Requires an authenticated connection for SMP over BT to be used.
+
+endchoice
+
+endif # MCUMGR_SMP_BT
 
 config MCUMGR_SMP_SHELL
 	bool "Shell mcumgr SMP transport"
