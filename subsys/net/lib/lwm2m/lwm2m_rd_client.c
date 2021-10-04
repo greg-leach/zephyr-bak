@@ -1043,12 +1043,12 @@ void lwm2m_rd_client_start(struct lwm2m_ctx *client_ctx, const char *ep_name,
 }
 
 void lwm2m_rd_client_stop(struct lwm2m_ctx *client_ctx,
-			   lwm2m_ctx_event_cb_t event_cb)
+			   lwm2m_ctx_event_cb_t event_cb, bool deregister)
 {
 	client.ctx = client_ctx;
 	client.event_cb = event_cb;
 
-	if (sm_is_registered()) {
+	if (sm_is_registered() && deregister) {
 		set_sm_state(ENGINE_DEREGISTER);
 	} else {
 		if (client.ctx->sock_fd > -1) {
