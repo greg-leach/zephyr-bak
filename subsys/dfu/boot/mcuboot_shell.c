@@ -77,7 +77,7 @@ static const char *swap_state_flag_str(uint8_t flag)
 	return "unknown";
 }
 
-#if defined(MCUBOOT_SHELL_ERASE_ENABLED)
+#if defined(CONFIG_MCUBOOT_SHELL_ERASE_ENABLED)
 static int cmd_mcuboot_erase(const struct shell *shell, size_t argc,
 			     char **argv)
 {
@@ -196,7 +196,7 @@ static int cmd_mcuboot_info(const struct shell *shell, size_t argc,
 
 SHELL_STATIC_SUBCMD_SET_CREATE(mcuboot_cmds,
 	SHELL_CMD_ARG(confirm, NULL, "confirm", cmd_mcuboot_confirm, 1, 0),
-#if defined(MCUBOOT_SHELL_ERASE_ENABLED)
+#if defined(CONFIG_MCUBOOT_SHELL_ERASE_ENABLED)
 	SHELL_CMD_ARG(erase, NULL, "erase <area_id>", cmd_mcuboot_erase, 2, 0),
 #endif
 	SHELL_CMD_ARG(request_upgrade, NULL, "request_upgrade [permanent]",
