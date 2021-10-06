@@ -1,0 +1,19 @@
+# Copyright (c) 2021 Laird Connectivity
+# SPDX-License-Identifier: Apache-2.0
+
+menuconfig LWM2M_IPSO_FILLING_SENSOR
+	bool "IPSO Filling sensor Support"
+	help
+	  This IPSO object can be used with an ultrasonic sensor to
+	  report how full a container is.
+
+if LWM2M_IPSO_FILLING_SENSOR
+
+config LWM2M_IPSO_FILLING_SENSOR_INSTANCE_COUNT
+	int "Maximum # of IPSO filling sensor object instances"
+	default 1
+	help
+	  This setting establishes the total count of IPSO filling
+	  sensor instances available to the LwM2M client.
+
+endif # LWM2M_IPSO_FILLING_SENSOR

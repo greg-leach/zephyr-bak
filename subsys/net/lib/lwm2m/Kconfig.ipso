@@ -286,5 +286,6 @@ config LWM2M_IPSO_PUSH_BUTTON_VERSION_1_1
 endchoice
 
 source "subsys/net/lib/lwm2m/Kconfig.ipso.current_sensor"
+source "subsys/net/lib/lwm2m/Kconfig.ipso.filling_sensor"
 
 endif # LWM2M_LWM2M_IPSO_SUPPORT
