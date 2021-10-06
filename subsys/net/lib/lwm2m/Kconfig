@@ -313,4 +313,6 @@ source "subsys/net/lib/lwm2m/Kconfig.ipso"
 
 endmenu
 
+source "subsys/net/lib/lwm2m/Kconfig.gateway_obj"
+
 endif # LWM2M

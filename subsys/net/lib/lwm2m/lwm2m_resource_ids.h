@@ -43,6 +43,7 @@
 #define ON_TIME_RID                       5852
 #define OFF_TIME_RID                      5854
 #define MEASUREMENT_QUALITY_INDICATOR_RID 6042
+#define RSSI_RID                          6045
 #define MEASUREMENT_QUALITY_LEVEL_RID     6049
 #define FRACTIONAL_TIMESTAMP_RID          6050
 /* clang-format on */
