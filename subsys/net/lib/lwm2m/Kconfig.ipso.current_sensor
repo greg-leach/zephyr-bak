@@ -1,0 +1,37 @@
+# Copyright (c) 2021 Laird Connectivity
+# SPDX-License-Identifier: Apache-2.0
+
+menuconfig LWM2M_IPSO_CURRENT_SENSOR
+	bool "IPSO Current Sensor Support"
+	help
+	  This IPSO object should be used with a current sensor to
+	  report a current measurement. It also provides resources for
+	  minimum/maximum measured values and the minimum/maximum range
+	  that can be measured by the sensor.
+
+if LWM2M_IPSO_CURRENT_SENSOR
+
+config LWM2M_IPSO_CURRENT_SENSOR_INSTANCE_COUNT
+	int "Maximum # of IPSO Current Sensor object instances"
+	default 1
+	help
+	  This setting establishes the total count of IPSO Current
+	  Sensor instances available to the LWM2M client.
+
+choice
+	prompt "IPSO Current object version"
+	default LWM2M_IPSO_CURRENT_SENSOR_VERSION_1_0
+	help
+	  Select which version of the IPSO Current object should be used.
+
+config LWM2M_IPSO_CURRENT_SENSOR_VERSION_1_0
+	bool "IPSO Current object version 1.0"
+
+config LWM2M_IPSO_CURRENT_SENSOR_VERSION_1_1
+	bool "IPSO Current object version 1.1"
+	help
+	  Adds timestamp and measurement quality
+
+endchoice
+
+endif # LWM2M_IPSO_CURRENT_SENSOR
