@@ -43,6 +43,7 @@
 #define LWM2M_OBJECT_FIRMWARE_ID			5
 #define LWM2M_OBJECT_LOCATION_ID			6
 #define LWM2M_OBJECT_CONNECTIVITY_STATISTICS_ID		7
+#define LWM2M_OBJECT_GATEWAY_ID				25
 
 /**
  * @brief LwM2M Objects produced by 3rd party Standards Development
