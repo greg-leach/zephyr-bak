@@ -1,0 +1,58 @@
+# Copyright (c) 2021 Laird Connectivity
+# SPDX-License-Identifier: Apache-2.0
+
+menuconfig LWM2M_GATEWAY_OBJ_SUPPORT
+	bool "Enable LwM2M Gateway Object (25)"
+
+if LWM2M_GATEWAY_OBJ_SUPPORT
+
+config LWM2M_GATEWAY_MAX_INSTANCES
+	int "Maximum number of bridged devices"
+	default 1
+	help
+	  This setting establishes the total count of LwM2M Gateway
+	  instances available to the LWM2M client.
+
+choice
+	prompt "Gateway object version"
+	default LWM2M_GATEWAY_VERSION_3_0
+	help
+	  Select which version of the Gateway object should be used.
+
+config LWM2M_GATEWAY_VERSION_2_0
+	bool "IPSO Gateway object version 2.0"
+
+config LWM2M_GATEWAY_VERSION_3_0
+	bool "IPSO Gateway object version 3.0"
+	help
+	  Adds support for RSSI.
+
+endchoice
+
+config LWM2M_GATEWAY_DEFAULT_DEVICE_ID
+	string "Identifies the IoT Device bridged to the LwM2M Gateway"
+	default "Node"
+
+config LWM2M_GATEWAY_DEVICE_ID_MAX_STR_SIZE
+	int "Maximum string size for device ID"
+	default 32
+
+config LWM2M_GATEWAY_DEFAULT_DEVICE_PREFIX
+	string "Used for access to LwM2M Objects of this IoT Device"
+	default "n"
+
+config LWM2M_GATEWAY_PREFIX_MAX_STR_SIZE
+	int "Max string size for prefix"
+	default 32
+
+config LWM2M_GATEWAY_DEFAULT_IOT_DEVICE_OBJECTS
+	string "Contains the Objects and Object Instances exposed by Gateway"
+	default "</3>;ver=1.0,</3/0>,</4>;ver=1.0,</4/0>,</5>;ver=1.0,</5/0>,</9>;ver=1.0,</9/0>"
+	help
+	  It uses the same CoreLnk format as Registration Interface.
+
+config LWM2M_GATEWAY_IOT_DEVICE_OBJECTS_MAX_STR_SIZE
+	int "Maximum string size for IoT device objects"
+	default 128
+
+endif # LWM2M_GATEWAY_OBJ_SUPPORT
