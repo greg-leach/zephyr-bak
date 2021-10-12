@@ -211,6 +211,7 @@ struct lis2dh_config {
 #endif /* CONFIG_LIS2DH_TRIGGER */
 	bool is_lsm303agr_dev;
 	bool disc_pull_up;
+	bool anym_on_int1;
 };
 
 struct lis2dh_transfer_function {
