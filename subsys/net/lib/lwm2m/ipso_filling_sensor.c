@@ -41,13 +41,13 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 
 /* resource state variables */
 static uint32_t container_height[MAX_INSTANCE_COUNT]; /* cm */
-static float64_value_t actual_fill_percentage[MAX_INSTANCE_COUNT];
+static double actual_fill_percentage[MAX_INSTANCE_COUNT];
 static uint32_t actual_fill_level[MAX_INSTANCE_COUNT]; /* cm */
-static float64_value_t high_threshold[MAX_INSTANCE_COUNT];
+static double high_threshold[MAX_INSTANCE_COUNT];
 static bool container_full[MAX_INSTANCE_COUNT];
-static float64_value_t low_threshold[MAX_INSTANCE_COUNT];
+static double low_threshold[MAX_INSTANCE_COUNT];
 static bool container_empty[MAX_INSTANCE_COUNT];
-static float64_value_t average_fill_speed[MAX_INSTANCE_COUNT];
+static double average_fill_speed[MAX_INSTANCE_COUNT];
 static int64_t forecast_full_date[MAX_INSTANCE_COUNT];
 static int64_t forecast_empty_date[MAX_INSTANCE_COUNT];
 static bool container_out_of_location[MAX_INSTANCE_COUNT];
@@ -57,15 +57,15 @@ static struct lwm2m_engine_obj fill_sensor;
 static struct lwm2m_engine_obj_field fields[] = {
 	OBJ_FIELD_DATA(CONTAINER_HEIGHT_FILLING_SENSOR_RID, RW, U32),
 	OBJ_FIELD_DATA(ACTUAL_FILL_PERCENTAGE_FILLING_SENSOR_RID, R_OPT,
-		       FLOAT64),
+		       FLOAT),
 	OBJ_FIELD_DATA(ACTUAL_FILL_LEVEL_FILLING_SENSOR_RID, R_OPT, U32),
 	OBJ_FIELD_DATA(HIGH_THRESHOLD_PERCENTAGE_FILLING_SENSOR_RID, RW_OPT,
-		       FLOAT64),
+		       FLOAT),
 	OBJ_FIELD_DATA(CONTAINER_FULL_FILLING_SENSOR_RID, R, BOOL),
 	OBJ_FIELD_DATA(LOW_THRESHOLD_PERCENTAGE_FILLING_SENSOR_RID, RW_OPT,
-		       FLOAT64),
+		       FLOAT),
 	OBJ_FIELD_DATA(CONTAINER_EMPTY_FILLING_SENSOR_RID, R, BOOL),
-	OBJ_FIELD_DATA(AVERAGE_FILL_SPEED_FILLING_SENSOR_RID, R_OPT, FLOAT64),
+	OBJ_FIELD_DATA(AVERAGE_FILL_SPEED_FILLING_SENSOR_RID, R_OPT, FLOAT),
 	OBJ_FIELD_EXECUTE_OPT(RESET_AVERAGE_FILL_SPEED_FILLING_SENSOR_RID),
 	OBJ_FIELD_DATA(FORECAST_FULL_DATE_FILLING_SENSOR_RID, R_OPT, TIME),
 	OBJ_FIELD_DATA(FORECAST_EMPTY_DATE_FILLING_SENSOR_RID, R_OPT, TIME),
@@ -88,8 +88,7 @@ static int reset_average_fill_speed_cb(uint16_t obj_inst_id, uint8_t *args,
 	LOG_DBG("Reset Average Fill Speed %d", obj_inst_id);
 	for (i = 0; i < MAX_INSTANCE_COUNT; i++) {
 		if (inst[i].obj && inst[i].obj_inst_id == obj_inst_id) {
-			average_fill_speed[i].val1 = 0;
-			average_fill_speed[i].val2 = 0;
+			average_fill_speed[i] = 0;
 			return 0;
 		}
 	}
@@ -97,59 +96,26 @@ static int reset_average_fill_speed_cb(uint16_t obj_inst_id, uint8_t *args,
 	return -ENOENT;
 }
 
-static struct float64_value make_double_value(double d)
-{
-	struct float64_value f;
-
-	f.val1 = (int64_t)d;
-	f.val2 = (int64_t)(LWM2M_FLOAT64_DEC_MAX * (d - f.val1));
-
-	return f;
-}
-
-static double make_double(struct float64_value value)
-{
-	return (double)value.val1 +
-	       ((double)value.val2) / ((float)LWM2M_FLOAT64_DEC_MAX);
-}
-
-/* Update fill percentage and empty/full when height, level, or
- * thresholds change. If value changes, then notify.
+/* Update empty/full when fill percentage or thresholds change.
+ * If value changes, then notify.
  */
 static void update(uint16_t obj_inst_id, uint16_t res_id, int index)
 {
-	struct float64_value fill_value;
-	double fill_percent;
 	bool full;
 	bool empty;
-	double level = (double)actual_fill_level[index];
 
-	if (container_height[index] != 0) {
-		fill_percent = level / (double)container_height[index];
-		fill_percent *= 100.0;
-		fill_value = make_double_value(fill_percent);
+	full = actual_fill_percentage[index] > high_threshold[index];
+	if (container_full[index] != full) {
+		container_full[index] = full;
+		NOTIFY_OBSERVER(IPSO_OBJECT_ID, obj_inst_id,
+				CONTAINER_FULL_FILLING_SENSOR_RID);
+	}
 
-		if (memcmp(&actual_fill_percentage[index], &fill_value,
-			   sizeof(fill_value)) != 0) {
-			actual_fill_percentage[index] = fill_value;
-			NOTIFY_OBSERVER(
-				IPSO_OBJECT_ID, obj_inst_id,
-				ACTUAL_FILL_PERCENTAGE_FILLING_SENSOR_RID);
-		}
-
-		full = fill_percent > make_double(high_threshold[index]);
-		if (container_full[index] != full) {
-			container_full[index] = full;
-			NOTIFY_OBSERVER(IPSO_OBJECT_ID, obj_inst_id,
-					CONTAINER_FULL_FILLING_SENSOR_RID);
-		}
-
-		empty = fill_percent < make_double(low_threshold[index]);
-		if (container_empty[index] != empty) {
-			container_empty[index] = empty;
-			NOTIFY_OBSERVER(IPSO_OBJECT_ID, obj_inst_id,
-					CONTAINER_EMPTY_FILLING_SENSOR_RID);
-		}
+	empty = actual_fill_percentage[index] < low_threshold[index];
+	if (container_empty[index] != empty) {
+		container_empty[index] = empty;
+		NOTIFY_OBSERVER(IPSO_OBJECT_ID, obj_inst_id,
+				CONTAINER_EMPTY_FILLING_SENSOR_RID);
 	}
 }
 
@@ -194,6 +160,20 @@ static struct lwm2m_engine_obj_inst *filling_sensor_create(uint16_t obj_inst_id)
 		return NULL;
 	}
 
+	/* Set default values (objects can be removed/recreated during runtime) */
+	container_height[index] = 0;
+	actual_fill_percentage[index] = 0;
+	actual_fill_level[index] = 0;
+	high_threshold[index] = 0;
+	container_full[index] = false;
+	low_threshold[index] = 0;
+	container_empty[index] = false;
+	average_fill_speed[index] = 0;
+	forecast_full_date[index] = 0;
+	forecast_empty_date[index] = 0;
+	container_out_of_location[index] = false;
+	container_out_of_position[index] = false;
+
 	(void)memset(res[index], 0,
 		     sizeof(res[index][0]) * ARRAY_SIZE(res[index]));
 	init_res_instance(res_inst[index], ARRAY_SIZE(res_inst[index]));
@@ -203,13 +183,13 @@ static struct lwm2m_engine_obj_inst *filling_sensor_create(uint16_t obj_inst_id)
 		     res_inst[index], j, 1, false, true,
 		     &container_height[index], sizeof(*container_height), NULL,
 		     NULL, NULL, update_cb, NULL);
-	INIT_OBJ_RES_DATA(ACTUAL_FILL_PERCENTAGE_FILLING_SENSOR_RID, res[index],
-			  i, res_inst[index], j, &actual_fill_percentage[index],
-			  sizeof(*actual_fill_percentage));
-	INIT_OBJ_RES(ACTUAL_FILL_LEVEL_FILLING_SENSOR_RID, res[index], i,
+	INIT_OBJ_RES(ACTUAL_FILL_PERCENTAGE_FILLING_SENSOR_RID, res[index], i,
 		     res_inst[index], j, 1, false, true,
-		     &actual_fill_level[index], sizeof(*actual_fill_percentage),
+		     &actual_fill_percentage[index], sizeof(*actual_fill_percentage),
 		     NULL, NULL, NULL, update_cb, NULL);
+	INIT_OBJ_RES_DATA(ACTUAL_FILL_LEVEL_FILLING_SENSOR_RID, res[index],
+			  i, res_inst[index], j, &actual_fill_level[index],
+			  sizeof(*actual_fill_level));
 	INIT_OBJ_RES(HIGH_THRESHOLD_PERCENTAGE_FILLING_SENSOR_RID, res[index],
 		     i, res_inst[index], j, 1, false, true,
 		     &high_threshold[index], sizeof(*high_threshold), NULL,
