@@ -168,13 +168,7 @@
 /* sample buffer size includes status register */
 #define LIS2DH_BUF_SZ			7
 
-#define LIS2DH_TEMP_EN_BIT      BIT(6)
-#define LIS2DH_ADC_EN_BIT       BIT(7)
 #define LIS2DH_CTRL4_BDU_BIT    BIT(7)
-#define LIS2DH_TEMP_CFG_EN_BITS (LIS2DH_TEMP_EN_BIT | LIS2DH_ADC_EN_BIT)
-#define LIS2DH_REG_ADC3_L       0x0C
-#define LIS2DH_REG_ADC3_H       0x0D
-#define LIS2DH_REG_TEMP_CFG_REG 0x1F
 
 union lis2dh_sample {
 	uint8_t raw[LIS2DH_BUF_SZ];
@@ -201,6 +195,13 @@ union lis2dh_bus_cfg {
 #endif /* DT_ANY_INST_ON_BUS_STATUS_OKAY(spi) */
 };
 
+struct temperature {
+	uint8_t cfg_addr;
+	uint8_t enable_mask;
+	uint8_t dout_addr;
+	uint8_t fractional_bits;
+};
+
 struct lis2dh_config {
 	const char *bus_name;
 	int (*bus_init)(const struct device *dev);
@@ -212,6 +213,9 @@ struct lis2dh_config {
 	bool is_lsm303agr_dev;
 	bool disc_pull_up;
 	bool anym_on_int1;
+#ifdef CONFIG_LIS2DH_MEASURE_TEMPERATURE
+	const struct temperature temperature;
+#endif
 };
 
 struct lis2dh_transfer_function {
@@ -236,7 +240,7 @@ struct lis2dh_data {
 	uint32_t scale;
 
 #ifdef CONFIG_LIS2DH_MEASURE_TEMPERATURE
-	int8_t temperature;
+	struct sensor_value temperature;
 #endif
 
 #ifdef CONFIG_LIS2DH_TRIGGER
