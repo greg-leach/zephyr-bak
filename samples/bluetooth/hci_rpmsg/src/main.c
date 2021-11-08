@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2019-2021 Nordic Semiconductor ASA
+ * Copyright (c) 2021 Laird Connectivity
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -33,6 +34,29 @@
 #define LOG_MODULE_NAME hci_rpmsg
 #include "common/log.h"
 
+#if defined(CONFIG_BOARD_BL5340PA_DVK_CPUNET) && \
+    defined(CONFIG_LIMIT_RADIO_POWER)
+#include <mpsl_tx_power.h>
+#include <lcz_rpmsg.h>
+#include <bl5340pa.h>
+#include <hal/nrf_vreqctrl.h>
+
+/* The BL5340PA FEM has a gain of 10dBm by default, to stay within regulatory
+ * limits, the total power must be 10dBm or less, therefore an output power of
+ * -2dBm can be used to set the total output power to 8dBm
+ */
+#define BL5340PA_MAX_POWER_PRE_FEM_DBM -2
+
+static mpsl_tx_power_envelope_t ble_power_1m;
+#if defined(CONFIG_BT_CTLR_PHY_2M)
+static mpsl_tx_power_envelope_t ble_power_2m;
+#endif
+#if defined(CONFIG_BT_CTLR_PHY_CODED)
+static mpsl_tx_power_envelope_t ble_power_125k;
+static mpsl_tx_power_envelope_t ble_power_500k;
+#endif
+#endif
+
 static int endpoint_id;
 
 static K_THREAD_STACK_DEFINE(tx_thread_stack, CONFIG_BT_HCI_TX_STACK_SIZE);
@@ -51,7 +75,7 @@ static struct net_buf *hci_rpmsg_cmd_recv(uint8_t *data, size_t remaining)
 	struct net_buf *buf;
 
 	if (remaining < sizeof(*hdr)) {
-		LOG_ERR("Not enought data for command header");
+		LOG_ERR("Not enough data for command header");
 		return NULL;
 	}
 
@@ -249,6 +273,10 @@ int endpoint_cb(struct rpmsg_endpoint *ept, void *data, size_t len, uint32_t src
 void main(void)
 {
 	int err;
+#if defined(CONFIG_BOARD_BL5340PA_DVK_CPUNET) && \
+    defined(CONFIG_LIMIT_RADIO_POWER)
+	int32_t rc;
+#endif
 
 	/* incoming events and data from the controller */
 	static K_FIFO_DEFINE(rx_queue);
@@ -265,6 +293,73 @@ void main(void)
 			K_THREAD_STACK_SIZEOF(tx_thread_stack), tx_thread,
 			NULL, NULL, NULL, K_PRIO_COOP(7), 0, K_NO_WAIT);
 	k_thread_name_set(&tx_thread_data, "HCI rpmsg TX");
+
+#if defined(CONFIG_BOARD_BL5340PA_DVK_CPUNET) && \
+    defined(CONFIG_LIMIT_RADIO_POWER)
+	/* Configure maximum BLE power for BL5340PA */
+	ble_power_1m.phy = MPSL_PHY_BLE_1M;
+	memset(ble_power_1m.envelope.tx_power_ble,
+	       BL5340PA_MAX_POWER_PRE_FEM_DBM,
+	       sizeof(ble_power_1m.envelope.tx_power_ble));
+
+#if defined(CONFIG_BT_CTLR_PHY_2M)
+	ble_power_2m.phy = MPSL_PHY_BLE_2M;
+	memset(ble_power_2m.envelope.tx_power_ble,
+	       BL5340PA_MAX_POWER_PRE_FEM_DBM,
+	       sizeof(ble_power_2m.envelope.tx_power_ble));
+#endif
+
+#if defined(CONFIG_BT_CTLR_PHY_CODED)
+	ble_power_125k.phy = MPSL_PHY_BLE_LR125Kbit;
+	memset(ble_power_125k.envelope.tx_power_ble,
+	       BL5340PA_MAX_POWER_PRE_FEM_DBM,
+	       sizeof(ble_power_125k.envelope.tx_power_ble));
+	ble_power_500k.phy = MPSL_PHY_BLE_LR500Kbit;
+	memset(ble_power_500k.envelope.tx_power_ble,
+	       BL5340PA_MAX_POWER_PRE_FEM_DBM,
+	       sizeof(ble_power_500k.envelope.tx_power_ble));
+#endif
+
+	rc = mpsl_tx_power_channel_map_set(&ble_power_1m);
+
+	if (rc != 0) {
+		LOG_ERR("Failed to limit 1Mbps BLE power: %d.", rc);
+		bl5340pa_regulatory_error(BL5340PA_RADIO_TYPE_BLE, MPSL_PHY_BLE_1M, rc);
+	}
+
+#if defined(CONFIG_BT_CTLR_PHY_2M)
+	rc = mpsl_tx_power_channel_map_set(&ble_power_2m);
+
+	if (rc != 0) {
+		LOG_ERR("Failed to limit 2Mbps BLE power: %d.", rc);
+		bl5340pa_regulatory_error(BL5340PA_RADIO_TYPE_BLE, MPSL_PHY_BLE_2M, rc);
+	}
+#endif
+
+#if defined(CONFIG_BT_CTLR_PHY_CODED)
+	rc = mpsl_tx_power_channel_map_set(&ble_power_125k);
+
+	if (rc != 0) {
+		LOG_ERR("Failed to limit 125Kbps BLE power: %d.", rc);
+		bl5340pa_regulatory_error(BL5340PA_RADIO_TYPE_BLE, MPSL_PHY_BLE_LR125Kbit, rc);
+	}
+
+	rc = mpsl_tx_power_channel_map_set(&ble_power_500k);
+
+	if (rc != 0) {
+		LOG_ERR("Failed to limit 500Kbps BLE power: %d.", rc);
+		bl5340pa_regulatory_error(BL5340PA_RADIO_TYPE_BLE, MPSL_PHY_BLE_LR500Kbit, rc);
+	}
+#endif
+
+	/* Ensure VREQCTRL for an additional +3dBm output power is disabled */
+	nrf_vreqctrl_radio_high_voltage_set(NRF_VREQCTRL_NS, false);
+
+	if (rc == 0) {
+		/* Radio is safe to use */
+		bl5340pa_regulatory_error(BL5340PA_RADIO_TYPE_BLE, 0, 0);
+	}
+#endif
 
 	while (1) {
 		struct net_buf *buf;
