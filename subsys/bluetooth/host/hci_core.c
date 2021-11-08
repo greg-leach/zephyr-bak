@@ -58,6 +58,24 @@
 #include "direction_internal.h"
 #endif /* CONFIG_BT_DF */
 
+#if defined(CONFIG_BOARD_BL5340PA_DVK_CPUAPP) && \
+    defined(CONFIG_CHECK_RADIO_POWER_LIMITED)
+#include <lcz_rpmsg.h>
+#include <bl5340pa.h>
+
+#define RADIO_STACK_READY_MAX_CHECKS 3
+#define RADIO_STACK_READY_CHECK_DELAY K_SECONDS(1)
+#define RADIO_ERROR_BUFFER_SIZE 16
+
+static bool lcz_rpmsg_init = false;
+static struct k_sem radio_check_sem;
+static uint8_t radio_stack = 0;
+static uint8_t radio_option = 0;
+static int32_t radio_error = 0;
+static bool radio_status_check_required = false;
+static uint8_t stack_checks_performed = 0;
+#endif
+
 #define HCI_CMD_TIMEOUT      K_SECONDS(10)
 
 /* Stacks for the threads */
@@ -3474,14 +3492,146 @@ void bt_finalize_init(void)
 	bt_dev_show_info();
 }
 
+#if defined(CONFIG_BOARD_BL5340PA_DVK_CPUAPP) && \
+    defined(CONFIG_CHECK_RADIO_POWER_LIMITED)
+static void check_radio_status(void)
+{
+	uint8_t buffer = RPMSG_OPCODE_BL5340PA_GET_STATUS;
+	lcz_rpmsg_send(RPMSG_COMPONENT_BL5340PA, &buffer, sizeof(buffer));
+}
+
+static void radio_status_error(void)
+{
+	uint8_t buffer[RADIO_ERROR_BUFFER_SIZE];
+	sprintf(buffer, "%-6d", radio_error);
+
+	LOG_ERR("\r\n"
+		"************ CRITICAL ERROR ************\r\n"
+		"* Radio regulatory limit setup failed. *\r\n"
+		"* Mode: %d, Option: %d, Error: %s    *\r\n"
+		"* Radio stack is inoperable to prevent *\r\n"
+		"* breach of regulatory limits.         *\r\n"
+		"****************************************", radio_stack,
+		radio_option, log_strdup(buffer));
+}
+
+static bool rpmsg_handler(uint8_t component, void *data, size_t len,
+                          uint32_t src, bool handled)
+{
+	uint8_t *buffer = (uint8_t *)data;
+	bool give_semaphore = false;
+
+	if (radio_status_check_required == false) {
+		/* Radio status check not required at this time */
+		return false;
+	}
+
+        if (len == RPMSG_LENGTH_BL5340PA_GET_STATUS_RESPONSE &&
+            buffer[RPMSG_BL5340PA_OFFSET_OPCODE] ==
+            RPMSG_OPCODE_BL5340PA_GET_STATUS) {
+                /* Radio ready response, check if the radio is ready for use */
+                if (buffer[BL5340PA_STATUS_OFFSET_STATUS] ==
+                    BL5340PA_RADIO_STATUS_ENABLED) {
+                        /* Stack is ready to be used */
+			radio_error = 0;
+			give_semaphore = true;
+                } else if (buffer[BL5340PA_STATUS_OFFSET_STATUS] ==
+                           BL5340PA_RADIO_STATUS_NOT_KNOWN) {
+                        /* Stack is still being setup */
+                        if (stack_checks_performed <
+			    RADIO_STACK_READY_MAX_CHECKS) {
+                                /* Re-query stack in a second */
+				k_sleep(RADIO_STACK_READY_CHECK_DELAY);
+				check_radio_status();
+				++stack_checks_performed;
+                        } else {
+                                /* Stack has been queried multiple times and is
+                                 * still not ready, something is not right
+                                 */
+				radio_error = -EIO;
+				give_semaphore = true;
+                        }
+                } else if (buffer[BL5340PA_STATUS_OFFSET_STATUS] ==
+                           BL5340PA_RADIO_STATUS_DISABLED) {
+                        /* Stack cannot be used due to issue with regulatory
+                         * limit setting
+                         */
+			memcpy(&radio_error,
+			       &buffer[BL5340PA_STATUS_OFFSET_ERROR],
+			       BL5340PA_STATUS_LENGTH_ERROR);
+			radio_stack = buffer[BL5340PA_STATUS_OFFSET_STACK];
+			radio_option = buffer[BL5340PA_STATUS_OFFSET_OPTION];
+			give_semaphore = true;
+                } else {
+                        /* Unknown response */
+                        if (stack_checks_performed <
+			    RADIO_STACK_READY_MAX_CHECKS) {
+                                /* Re-query stack in a second */
+				k_sleep(RADIO_STACK_READY_CHECK_DELAY);
+				check_radio_status();
+				++stack_checks_performed;
+                        } else {
+                                /* Stack has been queried multiple times and is
+                                 * still returning garbage, something is not
+				 * right
+                                 */
+				radio_error = -EIO;
+				give_semaphore = true;
+                        }
+                }
+
+		if (give_semaphore == true) {
+			radio_status_check_required = false;
+			k_sem_give(&radio_check_sem);
+		}
+
+                return true;
+        }
+
+        return false;
+}
+#endif
+
 static int bt_init(void)
 {
 	int err;
+
+#if defined(CONFIG_BOARD_BL5340PA_DVK_CPUAPP) && \
+    defined(CONFIG_CHECK_RADIO_POWER_LIMITED)
+	int endpoint_id;
+
+	if (lcz_rpmsg_init == false) {
+		/* Initialise the lcz_rpmsg component */
+		lcz_rpmsg_register(&endpoint_id, 0, rpmsg_handler);
+
+		k_sem_init(&radio_check_sem, 0, 1);
+
+		lcz_rpmsg_init = true;
+	}
+#endif
 
 	err = hci_init();
 	if (err) {
 		return err;
 	}
+
+#if defined(CONFIG_BOARD_BL5340PA_DVK_CPUAPP) && \
+    defined(CONFIG_CHECK_RADIO_POWER_LIMITED)
+	/* Check the radio status and wait for it to respond with success or
+	 * failure
+	 */
+	radio_status_check_required = true;
+	check_radio_status();
+
+	err = k_sem_take(&radio_check_sem, HCI_CMD_TIMEOUT);
+	BT_ASSERT_MSG(err == 0, "k_sem_take failed with err %d", err);
+
+	if (radio_error != 0) {
+		/* Radio stack initialisation failed, show error message */
+		radio_status_error();
+		return radio_error;
+	}
+#endif
 
 	if (IS_ENABLED(CONFIG_BT_CONN)) {
 		err = bt_conn_init();
