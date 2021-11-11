@@ -41,11 +41,11 @@
 #include <bl5340pa.h>
 #include <hal/nrf_vreqctrl.h>
 
-/* The BL5340PA FEM has a gain of 10dBm by default, to stay within regulatory
+/* The BL5340PA FEM has a gain of 21dBm by default, to stay within regulatory
  * limits, the total power must be 10dBm or less, therefore an output power of
- * -2dBm can be used to set the total output power to 8dBm
+ * -16dBm can be used to set the total output power to 5dBm
  */
-#define BL5340PA_MAX_POWER_PRE_FEM_DBM -2
+#define BL5340PA_MAX_POWER_PRE_FEM_DBM -16
 
 static mpsl_tx_power_envelope_t ble_power_1m;
 #if defined(CONFIG_BT_CTLR_PHY_2M)
