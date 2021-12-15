@@ -41,6 +41,13 @@ config MCUBOOT_SHELL
 	  allows to perform such operations as: confirm, erase and request
 	  upgrade.
 
+config MCUBOOT_SHELL_ERASE_ENABLED
+	bool "Allow erase from MCUboot shell"
+	default y
+	depends on MCUBOOT_SHELL
+	help
+	  Enables using the erase function from the MCUboot shell module
+
 config MCUBOOT_TRAILER_SWAP_TYPE
 	bool "use trailer's swap_type field"
 	default y
