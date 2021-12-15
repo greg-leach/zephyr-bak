@@ -22,6 +22,9 @@ struct shell_history {
 	struct ring_buf *ring_buf;
 	sys_dlist_t list;
 	sys_dnode_t *current;
+#if defined(CONFIG_SHELL_SELECTIVE_HISTORY)
+	bool skip_current_line;
+#endif
 };
 
 /**
