@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2020 Grinn
+ * Copyright (c) 2021 Laird Connectivity
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -76,6 +77,7 @@ static const char *swap_state_flag_str(uint8_t flag)
 	return "unknown";
 }
 
+#if defined(CONFIG_MCUBOOT_SHELL_ERASE_ENABLED)
 static int cmd_mcuboot_erase(const struct shell *shell, size_t argc,
 			     char **argv)
 {
@@ -92,6 +94,7 @@ static int cmd_mcuboot_erase(const struct shell *shell, size_t argc,
 
 	return 0;
 }
+#endif
 
 static int cmd_mcuboot_confirm(const struct shell *shell, size_t argc,
 			       char **argv)
@@ -193,7 +196,9 @@ static int cmd_mcuboot_info(const struct shell *shell, size_t argc,
 
 SHELL_STATIC_SUBCMD_SET_CREATE(mcuboot_cmds,
 	SHELL_CMD_ARG(confirm, NULL, "confirm", cmd_mcuboot_confirm, 1, 0),
+#if defined(CONFIG_MCUBOOT_SHELL_ERASE_ENABLED)
 	SHELL_CMD_ARG(erase, NULL, "erase <area_id>", cmd_mcuboot_erase, 2, 0),
+#endif
 	SHELL_CMD_ARG(request_upgrade, NULL, "request_upgrade [permanent]",
 		      cmd_mcuboot_request_upgrade, 1, 1),
 	SHELL_SUBCMD_SET_END /* Array terminated. */
