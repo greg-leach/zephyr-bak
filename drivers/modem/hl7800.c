@@ -257,6 +257,11 @@ static const struct mdm_control_pinconfig pinconfig[] = {
 
 #define MDM_MAX_SOCKETS 6
 
+/* Special value used to indicate that a socket is being created
+ * and that its actual ID hasn't been assigned yet.
+ */
+#define MDM_CREATE_SOCKET_ID (MDM_MAX_SOCKETS + 1)
+
 #define BUF_ALLOC_TIMEOUT K_SECONDS(1)
 
 #define SIZE_OF_NUL 1
@@ -1885,6 +1890,7 @@ static bool on_cmd_atcmdinfo_ipaddr(struct net_buf **buf, uint16_t len)
 		num_delims = 16;
 	}
 	search_start = addr_start;
+	sm_start = addr_start;
 	for (int i = 0; i < num_delims; i++) {
 		sm_start = strchr(search_start, '.');
 		if (!sm_start) {
@@ -3453,7 +3459,7 @@ static bool on_cmd_sockok(struct net_buf **buf, uint16_t len)
 }
 
 /* Handler: +KTCP_IND/+KUDP_IND */
-static bool on_cmd_sock_ind(struct net_buf **buf, uint16_t len)
+static bool on_cmd_sock_ind(struct net_buf **buf, uint16_t len, const char *const type)
 {
 	struct hl7800_socket *sock = NULL;
 	char *delim;
@@ -3469,12 +3475,12 @@ static bool on_cmd_sock_ind(struct net_buf **buf, uint16_t len)
 	/* find ',' because this is the format we expect */
 	delim = strchr(value, ',');
 	if (!delim) {
-		LOG_ERR("+K**P_IND could not find ','");
+		LOG_ERR("%s could not find ','", type);
 		goto done;
 	}
 
 	id = strtol(value, NULL, 10);
-	LOG_DBG("+K**P_IND ID: %d", id);
+	LOG_DBG("%s ID: %d", type, id);
 	sock = socket_from_id(id);
 	if (sock) {
 		k_sem_give(&sock->sock_send_sem);
@@ -3485,6 +3491,17 @@ static bool on_cmd_sock_ind(struct net_buf **buf, uint16_t len)
 done:
 	return true;
 }
+
+static bool on_cmd_ktcp_ind(struct net_buf **buf, uint16_t len)
+{
+	return on_cmd_sock_ind(buf, len, "+KTCP_IND");
+}
+
+static bool on_cmd_kudp_ind(struct net_buf **buf, uint16_t len)
+{
+	return on_cmd_sock_ind(buf, len, "+KUDP_IND");
+}
+
 
 /* Handler: ERROR */
 static bool on_cmd_sockerror(struct net_buf **buf, uint16_t len)
@@ -3639,8 +3656,8 @@ static bool on_cmd_sockcreate(struct net_buf **buf, uint16_t len)
 	/* check if the socket has been created already */
 	sock = socket_from_id(ictx.last_socket_id);
 	if (!sock) {
-		/* look up new socket by special id */
-		sock = socket_from_id(MDM_MAX_SOCKETS + 1);
+		LOG_DBG("look up new socket by special id");
+		sock = socket_from_id(MDM_CREATE_SOCKET_ID);
 		if (!sock) {
 			LOG_ERR("No matching socket");
 			goto done;
@@ -4242,8 +4259,8 @@ static void hl7800_rx(void)
 		CMD_HANDLER("NO CARRIER", sockerror),
 
 		/* UNSOLICITED SOCKET RESPONSES */
-		CMD_HANDLER("+KTCP_IND: ", sock_ind),
-		CMD_HANDLER("+KUDP_IND: ", sock_ind),
+		CMD_HANDLER("+KTCP_IND: ", ktcp_ind),
+		CMD_HANDLER("+KUDP_IND: ", kudp_ind),
 		CMD_HANDLER("+KTCP_NOTIF: ", sock_notif),
 		CMD_HANDLER("+KUDP_NOTIF: ", sock_notif),
 		CMD_HANDLER("+KTCP_DATA: ", sockdataind),
@@ -5162,9 +5179,9 @@ static int configure_TCP_socket(struct hl7800_socket *sock)
 		return -EINVAL;
 	}
 
-	/* socket # needs assigning */
-	sock->socket_id = MDM_MAX_SOCKETS + 1;
+	sock->socket_id = MDM_CREATE_SOCKET_ID;
 
+	/* Restoring sockets is handled in driver (not saved in modem) */
 	snprintk(cmd_cfg, sizeof(cmd_cfg), "AT+KTCPCFG=%d,%d,\"%s\",%u,,,,%d", 1, 0,
 		 hl7800_sprint_ip_addr(&sock->dst), dst_port, af);
 	ret = send_at_cmd(sock, cmd_cfg, MDM_CMD_SEND_TIMEOUT, 0, false);
@@ -5192,8 +5209,7 @@ static int configure_UDP_socket(struct hl7800_socket *sock)
 	char cmd[sizeof("AT+KUDPCFG=1,0,,,,,0")];
 	int af;
 
-	/* socket # needs assigning */
-	sock->socket_id = MDM_MAX_SOCKETS + 1;
+	sock->socket_id = MDM_CREATE_SOCKET_ID;
 
 	if (sock->family == AF_INET) {
 		af = MDM_HL7800_SOCKET_AF_IPV4;
@@ -5203,6 +5219,7 @@ static int configure_UDP_socket(struct hl7800_socket *sock)
 		return -EINVAL;
 	}
 
+	/* Restoring sockets is handled in driver (not saved in modem) */
 	snprintk(cmd, sizeof(cmd), "AT+KUDPCFG=1,0,,,,,%d", af);
 	ret = send_at_cmd(sock, cmd, MDM_CMD_SEND_TIMEOUT, 0, false);
 	if (ret < 0) {
@@ -5238,16 +5255,16 @@ static int reconfigure_sockets(void)
 		    sock->reconfig) {
 			/* reconfigure socket so it is ready for use */
 			if (sock->type == SOCK_DGRAM) {
-				LOG_DBG("Reconfig UDP socket %d",
-					sock->socket_id);
 				ret = configure_UDP_socket(sock);
+				LOG_DBG("Reconfigured UDP socket %d: %d",
+					sock->socket_id, ret);
 				if (ret < 0) {
 					goto done;
 				}
 			} else if (sock->type == SOCK_STREAM) {
-				LOG_DBG("Reconfig TCP socket %d",
-					sock->socket_id);
 				ret = configure_TCP_socket(sock);
+				LOG_DBG("Reconfigured TCP socket %d: %d",
+					sock->socket_id, ret);
 				if (ret < 0) {
 					goto done;
 				}
@@ -5312,7 +5329,7 @@ static int offload_get(sa_family_t family, enum net_sock_type type,
 	sock->context = *context;
 	sock->reconfig = false;
 	sock->created = false;
-	sock->socket_id = MDM_MAX_SOCKETS + 1; /* socket # needs assigning */
+	sock->socket_id = MDM_CREATE_SOCKET_ID;
 
 	/* If UDP, create UDP socket now.
 	 * TCP socket needs to be created later once the
