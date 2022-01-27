@@ -4703,11 +4703,35 @@ void mdm_gpio6_callback_isr(const struct device *port, struct gpio_callback *cb,
 #endif
 }
 
-void mdm_uart_cts_callback(const struct device *port, struct gpio_callback *cb,
-			   uint32_t pins)
+/**
+ * @brief Short spikes in CTS can be removed in the signal used by the application
+ */
+static int glitch_filter(int default_state, const struct device *port, gpio_pin_t pin,
+			 uint32_t usec_to_wait, uint32_t max_iterations)
 {
-	ictx.cts_state = (uint32_t)gpio_pin_get(
-		ictx.gpio_port_dev[MDM_UART_CTS], pinconfig[MDM_UART_CTS].pin);
+	int i = 0;
+	int state1;
+	int state2;
+
+	do {
+		state1 = read_pin(-1, port, pin);
+		k_busy_wait(usec_to_wait);
+		state2 = read_pin(-1, port, pin);
+		i += 1;
+	} while (((state1 != state2) || (state1 < 0) || (state2 < 0)) && (i < max_iterations));
+
+	if (i >= max_iterations) {
+		LOG_WRN("glitch filter max iterations exceeded %d state: %d", i, state1);
+		state1 = read_pin(default_state, port, pin);
+	}
+
+	return state1;
+}
+
+void mdm_uart_cts_callback(const struct device *port, struct gpio_callback *cb, uint32_t pins)
+{
+	ictx.cts_state =
+		glitch_filter(0, ictx.gpio_port_dev[MDM_WAKE], pinconfig[MDM_WAKE].pin, 50, 2);
 
 	if ((ictx.cts_callback != NULL) && (ictx.desired_sleep_level == HL7800_SLEEP_SLEEP)) {
 		ictx.cts_callback(ictx.cts_state);
