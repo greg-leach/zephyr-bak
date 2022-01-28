@@ -334,7 +334,6 @@ static const struct mdm_control_pinconfig pinconfig[] = {
 
 #define MDM_ADDR_FAM_MAX_LEN sizeof("IPV4V6")
 
-#ifdef CONFIG_NEWLIB_LIBC
 /* The ? can be a + or - */
 static const char TIME_STRING_FORMAT[] = "\"yy/MM/dd,hh:mm:ss?zz\"";
 #define TIME_STRING_DIGIT_STRLEN 2
@@ -353,7 +352,6 @@ static const char TIME_STRING_FORMAT[] = "\"yy/MM/dd,hh:mm:ss?zz\"";
 #define TM_SEC_RANGE 0, 60 /* leap second */
 #define QUARTER_HOUR_RANGE 0, 96
 #define SECONDS_PER_QUARTER_HOUR (15 * 60)
-#endif
 
 #define SEND_AT_CMD_ONCE_EXPECT_OK(c)                                          \
 	do {                                                                   \
@@ -542,10 +540,8 @@ struct hl7800_iface_ctx {
 	enum mdm_hl7800_network_state network_state;
 	enum net_operator_status operator_status;
 	void (*event_callback)(enum mdm_hl7800_event event, void *event_data);
-#ifdef CONFIG_NEWLIB_LIBC
 	struct tm local_time;
 	int32_t local_time_offset;
-#endif
 	bool local_time_valid;
 	bool configured;
 
@@ -589,10 +585,8 @@ static void generate_fota_state_event(void);
 static void generate_fota_count_event(void);
 #endif
 
-#ifdef CONFIG_NEWLIB_LIBC
 static bool convert_time_string_to_struct(struct tm *tm, int32_t *offset,
 					  char *time_string);
-#endif
 
 #ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
 static bool is_cmd_ready(void)
@@ -1040,7 +1034,6 @@ error:
 	return ret;
 }
 
-#ifdef CONFIG_NEWLIB_LIBC
 int32_t mdm_hl7800_get_local_time(struct tm *tm, int32_t *offset)
 {
 	int ret;
@@ -1061,7 +1054,6 @@ int32_t mdm_hl7800_get_local_time(struct tm *tm, int32_t *offset)
 	hl7800_unlock();
 	return ret;
 }
-#endif
 
 int32_t mdm_hl7800_get_operator_index(void)
 {
@@ -3249,7 +3241,6 @@ done:
 	return true;
 }
 
-#ifdef CONFIG_NEWLIB_LIBC
 /* Handler: +CCLK: "yy/MM/dd,hh:mm:ss±zz" */
 static bool on_cmd_rtc_query(struct net_buf **buf, uint16_t len)
 {
@@ -3352,7 +3343,6 @@ static bool convert_time_string_to_struct(struct tm *tm, int32_t *offset,
 	}
 	return (fc == 0);
 }
-#endif
 
 /* Handler: +CEREG: <stat>[,[<lac>],[<ci>],[<AcT>]
  *  [,[<cause_type>],[<reject_cause>] [,[<Active-Time>],[<Periodic-TAU>]]]]
@@ -4219,9 +4209,7 @@ static void hl7800_rx(void)
 		CMD_HANDLER("AT+CIMI", atcmdinfo_imsi),
 		CMD_HANDLER("+CFUN: ", modem_functionality),
 		CMD_HANDLER("%MEAS: ", survey_status),
-#ifdef CONFIG_NEWLIB_LIBC
 		CMD_HANDLER("+CCLK: ", rtc_query),
-#endif
 
 		/* UNSOLICITED modem information */
 		/* mobile startup report */
