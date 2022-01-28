@@ -4721,8 +4721,14 @@ static int glitch_filter(int default_state, const struct device *port, gpio_pin_
 	} while (((state1 != state2) || (state1 < 0) || (state2 < 0)) && (i < max_iterations));
 
 	if (i >= max_iterations) {
-		LOG_WRN("glitch filter max iterations exceeded %d state: %d", i, state1);
-		state1 = read_pin(default_state, port, pin);
+		LOG_WRN("glitch filter max iterations exceeded %d", i);
+		if (state1 < 0) {
+			if (state2 < 0) {
+				state1 = read_pin(default_state, port, pin);
+			} else {
+				state1 = state2;
+			}
+		}
 	}
 
 	return state1;
@@ -4731,7 +4737,9 @@ static int glitch_filter(int default_state, const struct device *port, gpio_pin_
 void mdm_uart_cts_callback(const struct device *port, struct gpio_callback *cb, uint32_t pins)
 {
 	ictx.cts_state =
-		glitch_filter(0, ictx.gpio_port_dev[MDM_WAKE], pinconfig[MDM_WAKE].pin, 50, 2);
+		glitch_filter(0, ictx.gpio_port_dev[MDM_UART_CTS], pinconfig[MDM_UART_CTS].pin,
+			      CONFIG_MODEM_HL7800_CTS_FILTER_US,
+			      CONFIG_MODEM_HL7800_CTS_FILTER_MAX_ITERATIONS);
 
 	if ((ictx.cts_callback != NULL) && (ictx.desired_sleep_level == HL7800_SLEEP_SLEEP)) {
 		ictx.cts_callback(ictx.cts_state);
