@@ -4741,14 +4741,26 @@ void mdm_uart_cts_callback(const struct device *port, struct gpio_callback *cb, 
 			      CONFIG_MODEM_HL7800_CTS_FILTER_US,
 			      CONFIG_MODEM_HL7800_CTS_FILTER_MAX_ITERATIONS);
 
+	/* CTS toggles A LOT,
+	 * comment out the debug print unless we really need it.
+	 */
+	/* HL7800_IO_DBG_LOG("MDM_UART_CTS:%d", ictx.cts_state); */
+
 	if ((ictx.cts_callback != NULL) && (ictx.desired_sleep_level == HL7800_SLEEP_SLEEP)) {
 		ictx.cts_callback(ictx.cts_state);
 	}
 
-	/* CTS toggles A LOT,
-	 * comment out the debug print unless we really need it.
-	 */
-	/* LOG_DBG("MDM_UART_CTS:%d", val); */
+#ifdef CONFIG_MODEM_HL7800_LOW_POWER_MODE
+	if (ictx.desired_sleep_level == HL7800_SLEEP_SLEEP) {
+		if (ictx.cts_state) {
+			/* HL7800 is not awake, shut down UART to save power */
+			shutdown_uart();
+		} else {
+			power_on_uart();
+		}
+	}
+#endif
+
 	check_hl7800_awake();
 }
 
