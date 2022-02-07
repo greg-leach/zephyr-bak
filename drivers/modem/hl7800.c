@@ -659,8 +659,6 @@ static void check_hl7800_awake(void)
 		} else if (ictx.desired_sleep_level == HL7800_SLEEP_SLEEP) {
 			set_sleep_state(HL7800_SLEEP_SLEEP);
 		}
-
-		k_sem_reset(&ictx.mdm_awake);
 	}
 #endif
 }
@@ -2380,6 +2378,9 @@ static char *get_sleep_state_string(enum mdm_hl7800_sleep state)
 static void set_sleep_state(enum mdm_hl7800_sleep state)
 {
 	ictx.sleep_state = state;
+	if (ictx.sleep_state != HL7800_SLEEP_AWAKE) {
+		k_sem_reset(&ictx.mdm_awake);
+	}
 	generate_sleep_state_event();
 }
 
