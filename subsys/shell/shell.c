@@ -1364,10 +1364,9 @@ void shell_thread(void *shell_handle, void *arg_log_backend,
 	}
 
 	while (true) {
-		/* waiting for all signals including SHELL_SIGNAL_TXDONE due to
-		 * SMP packets not being picked up properly
-		 */
-		err = k_poll(shell->ctx->events, SHELL_SIGNALS, K_FOREVER);
+		/* waiting for all signals except SHELL_SIGNAL_TXDONE */
+		err = k_poll(shell->ctx->events, SHELL_SIGNAL_TXDONE,
+			     K_FOREVER);
 
 		if (err != 0) {
 			k_mutex_lock(&shell->ctx->wr_mtx, K_FOREVER);
