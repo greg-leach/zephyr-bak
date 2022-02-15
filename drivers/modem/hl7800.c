@@ -4867,6 +4867,9 @@ void mdm_uart_cts_callback(const struct device *port, struct gpio_callback *cb, 
 			shutdown_uart();
 		} else {
 			power_on_uart();
+			if (ictx.sleep_state == HL7800_SLEEP_SLEEP) {
+				allow_sleep(false);
+			}
 		}
 	}
 #endif
