@@ -219,16 +219,17 @@ static void detect_missed_strdup(struct log_msg *msg)
 
 static void z_log_msg_post_finalize(void)
 {
-	atomic_inc(&buffered_cnt);
+	atomic_val_t cnt = atomic_inc(&buffered_cnt);
+
 	if (panic_mode) {
 		unsigned int key = irq_lock();
 		(void)log_process(false);
 		irq_unlock(key);
-	} else if (proc_tid != NULL && buffered_cnt == 1) {
+	} else if (proc_tid != NULL && cnt == 0) {
 		k_timer_start(&log_process_thread_timer,
 			K_MSEC(CONFIG_LOG_PROCESS_THREAD_SLEEP_MS), K_NO_WAIT);
 	} else if (CONFIG_LOG_PROCESS_TRIGGER_THRESHOLD) {
-		if ((buffered_cnt == CONFIG_LOG_PROCESS_TRIGGER_THRESHOLD) &&
+		if ((cnt == CONFIG_LOG_PROCESS_TRIGGER_THRESHOLD) &&
 		    (proc_tid != NULL)) {
 			k_timer_stop(&log_process_thread_timer);
 			k_sem_give(&log_process_thread_sem);
@@ -812,7 +813,9 @@ bool z_impl_log_process(bool bypass)
 
 	msg = get_msg();
 	if (msg.msg) {
-		atomic_dec(&buffered_cnt);
+		if (!bypass) {
+			atomic_dec(&buffered_cnt);
+		}
 		msg_process(msg, bypass);
 	}
 
@@ -844,10 +847,12 @@ uint32_t z_vrfy_log_buffered_cnt(void)
 #include <syscalls/log_buffered_cnt_mrsh.c>
 #endif
 
-void z_log_dropped(void)
+void z_log_dropped(bool buffered)
 {
 	atomic_inc(&dropped_cnt);
-	atomic_dec(&buffered_cnt);
+	if (buffered) {
+		atomic_dec(&buffered_cnt);
+	}
 }
 
 uint32_t z_log_dropped_read_and_clear(void)
@@ -866,7 +871,7 @@ static void notify_drop(const struct mpsc_pbuf_buffer *buffer,
 	ARG_UNUSED(buffer);
 	ARG_UNUSED(item);
 
-	z_log_dropped();
+	z_log_dropped(true);
 }
 
 
