@@ -15,6 +15,7 @@ extern "C" {
 
 struct zephyr_smp_transport;
 struct net_buf;
+struct mgmt_hdr;
 
 /** @typedef zephyr_smp_transport_out_fn
  * @brief SMP transmit function for Zephyr.
@@ -114,6 +115,17 @@ void zephyr_smp_transport_init(struct zephyr_smp_transport *zst,
  * @param nb                    The request packet to process.
  */
 void zephyr_smp_rx_req(struct zephyr_smp_transport *zst, struct net_buf *nb);
+
+/**
+ * @brief Enqueues an outgoing SMP Client packet for transmission
+ *
+ * @param zst                   The transport to use to send the corresponding
+ *                                  response(s).
+ * @param cmd_hdr               The SMP header of the request
+ * @param cbor_data             The CBOR data of the request
+ */
+int zephyr_smp_tx_cmd(struct zephyr_smp_transport *zst, struct mgmt_hdr *cmd_hdr,
+		      const void *cbor_data);
 
 #ifdef __cplusplus
 }

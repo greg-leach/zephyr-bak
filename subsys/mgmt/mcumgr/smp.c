@@ -10,6 +10,7 @@
 #include "mgmt/mcumgr/buf.h"
 #include "smp/smp.h"
 #include "mgmt/mcumgr/smp.h"
+#include "mgmt/endian.h"
 
 static mgmt_alloc_rsp_fn zephyr_smp_alloc_rsp;
 static mgmt_trim_front_fn zephyr_smp_trim_front;
@@ -72,7 +73,7 @@ zephyr_smp_trim_front(void *buf, size_t len, void *arg)
 
 /**
  * Splits an appropriately-sized fragment from the front of a net_buf, as
- * neeeded.  If the length of the net_buf is greater than specified maximum
+ * needed.  If the length of the net_buf is greater than specified maximum
  * fragment size, a new net_buf is allocated, and data is moved from the source
  * net_buf to the new net_buf.  If the net_buf is small enough to fit in a
  * single fragment, the source net_buf is returned unmodified, and the supplied
@@ -262,7 +263,7 @@ zephyr_smp_process_packet(struct zephyr_smp_transport *zst,
 		.tx_rsp_cb = zephyr_smp_tx_rsp,
 	};
 
-	rc = smp_process_request_packet(&streamer, nb);
+	rc = smp_process_packet(&streamer, nb);
 	return rc;
 }
 
@@ -305,4 +306,52 @@ zephyr_smp_rx_req(struct zephyr_smp_transport *zst, struct net_buf *nb)
 {
 	net_buf_put(&zst->zst_fifo, nb);
 	k_work_submit(&zst->zst_work);
+}
+
+int
+zephyr_smp_tx_cmd(struct zephyr_smp_transport *zst, struct mgmt_hdr *cmd_hdr,
+		      const void *cbor_data)
+{
+	struct cbor_nb_writer writer;
+	struct smp_streamer streamer;
+	void *cmd;
+	int rc;
+
+	if (!zst || !cmd_hdr || !cbor_data || cmd_hdr->nh_len == 0) {
+		return -EINVAL;
+	}
+
+	streamer = (struct smp_streamer) {
+		.mgmt_stmr = {
+			.cfg = &zephyr_smp_cbor_cfg,
+			.reader = NULL,
+			.writer = &writer.enc,
+			.cb_arg = zst,
+		},
+		.tx_rsp_cb = zephyr_smp_tx_rsp,
+	};
+
+	/* todo: make allocate cmd function */
+	cmd = NULL;
+	cmd = mgmt_streamer_alloc_rsp(&streamer.mgmt_stmr, cmd);
+	if (cmd == NULL) {
+		return -ENOMEM;
+	}
+
+	rc = mgmt_streamer_init_writer(&streamer.mgmt_stmr, cmd);
+	if (rc != 0) {
+		return -1;
+	}
+
+	rc = writer.enc.write(&writer.enc, (const char *)cmd_hdr, sizeof(*cmd_hdr));
+	if (rc != 0) {
+		return rc;
+	}
+
+	rc = writer.enc.write(&writer.enc, cbor_data, ntohs(cmd_hdr->nh_len));
+	if (rc != 0) {
+		return rc;
+	}
+
+	return streamer.tx_rsp_cb(&streamer, cmd, streamer.mgmt_stmr.cb_arg);
 }

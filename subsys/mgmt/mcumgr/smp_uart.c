@@ -26,7 +26,7 @@ K_FIFO_DEFINE(smp_uart_rx_fifo);
 K_WORK_DEFINE(smp_uart_work, smp_uart_process_rx_queue);
 
 static struct mcumgr_serial_rx_ctxt smp_uart_rx_ctxt;
-static struct zephyr_smp_transport smp_uart_transport;
+struct zephyr_smp_transport smp_uart_transport;
 
 /**
  * Processes a single line (fragment) coming from the mcumgr UART driver.
