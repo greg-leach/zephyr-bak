@@ -724,53 +724,6 @@ void log_generic_from_user(struct log_msg_ids src_level,
  */
 bool log_is_strdup(const void *buf);
 
-/** @brief Free allocated buffer.
- *
- * @param buf Buffer.
- */
-void log_free(void *buf);
-
-/**
- * @brief Get current number of allocated buffers for string duplicates.
- */
-uint32_t log_get_strdup_pool_current_utilization(void);
-
-/**
- * @brief Get maximal number of simultaneously allocated buffers for string
- *	  duplicates.
- *
- * Value can be used to determine pool size.
- */
-uint32_t log_get_strdup_pool_utilization(void);
-
-/**
- * @brief Get length of the longest string duplicated.
- *
- * Value can be used to determine buffer size in the string duplicates pool.
- */
-uint32_t log_get_strdup_longest_string(void);
-
-/** @brief Indicate to the log core that one log message has been dropped.
- *
- * @param buffered True if dropped message was already buffered and it is being
- * dropped to free space for another message. False if message is being dropped
- * because allocation failed.
- */
-void z_log_dropped(bool buffered);
-
-/** @brief Read and clear current drop indications counter.
- *
- * @return Dropped count.
- */
-uint32_t z_log_dropped_read_and_clear(void);
-
-/** @brief Check if there are any pending drop notifications.
- *
- * @retval true Pending unreported drop indications.
- * @retval false No pending unreported drop indications.
- */
-bool z_log_dropped_pending(void);
-
 /** @brief Log a message from user mode context.
  *
  * @note This function is intended to be used internally
