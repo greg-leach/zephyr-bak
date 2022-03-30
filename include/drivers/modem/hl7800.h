@@ -469,6 +469,16 @@ int32_t mdm_hl7800_polte_enable(char *user, char *password);
  */
 int32_t mdm_hl7800_polte_locate(void);
 
+/**
+ * @brief Set the bands available for the LTE connection
+ *
+ * @param bands Band bitmap in hexadecimal format without the 0x prefix.
+ * Leading 0's for the value can be ommited.
+ *
+ * @return int32_t negative errno, 0 on success
+ */
+int32_t mdm_hl7800_set_bands(const char *bands);
+
 #ifdef __cplusplus
 }
 #endif
