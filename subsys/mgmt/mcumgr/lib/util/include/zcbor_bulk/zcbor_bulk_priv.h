@@ -10,6 +10,12 @@
 extern "C" {
 #endif
 
+/* LCZ temporary fix until base zephyr repository is updated */
+#ifndef STRINGIFY
+#define Z_STRINGIFY(x) #x
+#define STRINGIFY(s) Z_STRINGIFY(s)
+#endif
+
 /** @cond INTERNAL_HIDDEN */
 
 struct zcbor_map_decode_key_val {
