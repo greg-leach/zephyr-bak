@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2021 mcumgr authors
+ * Copyright (c) 2022 Laird Connectivity
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -126,16 +127,22 @@ smp_handle_single_payload(struct mgmt_ctxt *cbuf, const struct mgmt_hdr *req_hdr
 
 	if (handler_fn) {
 		*handler_found = true;
-		zcbor_map_start_encode(cbuf->cnbe->zs, CONFIG_MGMT_MAX_MAIN_MAP_ENTRIES);
+
+		if (handler->use_custom_cbor_encoder == false) {
+			zcbor_map_start_encode(cbuf->cnbe->zs, CONFIG_MGMT_MAX_MAIN_MAP_ENTRIES);
+		}
+
 		mgmt_evt(MGMT_EVT_OP_CMD_RECV, req_hdr->nh_group, req_hdr->nh_id, NULL);
 
 		MGMT_CTXT_SET_RC_RSN(cbuf, NULL);
 		rc = handler_fn(cbuf);
 
-		/* End response payload. */
-		if (!zcbor_map_end_encode(cbuf->cnbe->zs, CONFIG_MGMT_MAX_MAIN_MAP_ENTRIES) &&
-		    rc == 0) {
-			rc = MGMT_ERR_ENOMEM;
+		if (handler->use_custom_cbor_encoder == false) {
+			/* End response payload. */
+			if (!zcbor_map_end_encode(cbuf->cnbe->zs, CONFIG_MGMT_MAX_MAIN_MAP_ENTRIES) &&
+			    rc == 0) {
+				rc = MGMT_ERR_ENOMEM;
+			}
 		}
 	} else {
 		rc = MGMT_ERR_ENOTSUP;
