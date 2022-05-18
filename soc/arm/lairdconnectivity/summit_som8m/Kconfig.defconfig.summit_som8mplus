@@ -1,0 +1,80 @@
+# Summit SOM 8M Plus SoC defconfig
+
+# Copyright (c) 2022, Laird Connectivity
+# SPDX-License-Identifier: Apache-2.0
+
+if SOC_SUMMIT_SOM8MPLUS
+
+config SOC
+	string
+	default "summit_som8mplus"
+
+# set the tick per sec as a divider of the GPT clock source
+config SYS_CLOCK_TICKS_PER_SEC
+	default 4096 if MCUX_GPT_TIMER
+
+config SYS_CLOCK_HW_CYCLES_PER_SEC
+	int
+	default 32768 if MCUX_GPT_TIMER
+	default 24000000 if M7_CLOCK_ROOT_24M_OSC
+	default 200000000 if M7_CLOCK_ROOT_SYSTEM_PLL2_DIV5
+	default 250000000 if M7_CLOCK_ROOT_SYSTEM_PLL2_DIV4
+	default 800000000 if M7_CLOCK_ROOT_VPU_PLL
+	default 800000000 if M7_CLOCK_ROOT_SYSTEM_PLL1
+	default 650000000 if M7_CLOCK_ROOT_AUDIO_PLL1
+	default 1190000000 if M7_CLOCK_ROOT_VIDEO_PLL1
+	default 1000000000 if M7_CLOCK_ROOT_SYSTEM_PLL3
+
+if CLOCK_CONTROL
+
+config CLOCK_CONTROL_MCUX_CCM
+	default y if HAS_MCUX_CCM
+
+endif # CLOCK_CONTROL
+
+config I2C_MCUX_II2C
+	default y
+	depends on I2C
+
+if PINMUX
+
+config PINMUX_MCUX
+	default y
+
+endif # PINMUX
+
+config GPIO
+	default y
+
+if SERIAL
+
+config UART_MCUX_IUART
+	default y
+
+endif # SERIAL
+
+config IPM_IMX_REV2
+	default y
+	depends on IPM
+
+if CODE_ITCM
+
+config FLASH_SIZE
+	default $(dt_node_reg_size_int,/soc/itcm@0,0,K)
+
+config FLASH_BASE_ADDRESS
+	default $(dt_node_reg_addr_hex,/soc/itcm@0)
+
+endif # CODE_ITCM
+
+if CODE_DDR
+
+config FLASH_SIZE
+	default $(dt_node_reg_size_int,/soc/code@80000000,0,K)
+
+config FLASH_BASE_ADDRESS
+	default $(dt_node_reg_addr_hex,/soc/code@80000000)
+
+endif # CODE_DDR
+
+endif # SOC_SUMMIT_SOM8MPLUS

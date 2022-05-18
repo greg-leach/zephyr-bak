@@ -1,0 +1,13 @@
+/*
+ * Copyright (c) 2022, Laird Connectivity
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+&flexspi {
+	status = "okay";
+};
+
+&gpio3 {
+	status = "okay";
+};
