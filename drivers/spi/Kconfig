@@ -53,6 +53,8 @@ source "drivers/spi/Kconfig.mcux_flexcomm"
 
 source "drivers/spi/Kconfig.mcux_lpspi"
 
+source "drivers/spi/Kconfig.mcux_ecspi"
+
 source "drivers/spi/Kconfig.rv32m1_lpspi"
 
 source "drivers/spi/Kconfig.sam"

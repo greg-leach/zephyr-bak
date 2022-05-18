@@ -1,0 +1,502 @@
+/*
+ * Copyright (c) 2021, Laird Connectivity
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#include <arm/armv7-m.dtsi>
+#include <dt-bindings/clock/imx_ccm.h>
+#include <dt-bindings/rdc/imx_rdc.h>
+#include <dt-bindings/i2c/i2c.h>
+#include <mem.h>
+
+/ {
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		cpu0: cpu@0 {
+			device_type = "cpu";
+			compatible = "arm,cortex-m7";
+			reg = <0>;
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			mpu: mpu@e000ed90 {
+				compatible = "arm,armv7m-mpu";
+				reg = <0xe000ed90 0x40>;
+				arm,num-mpu-regions = <16>;
+			};
+		};
+	};
+
+	power-states {
+		run: lpm_m7_state_run {
+			compatible = "zephyr,power-state";
+			power-state-name="active";
+			substate-id = <0>;
+		};
+
+		wait: lpm_m7_state_wait {
+			compatible = "zephyr,power-state";
+			power-state-name="suspend-to-idle";
+			substate-id = <1>;
+		};
+
+		stop: lpm_m7_state_stop {
+			compatible = "zephyr,power-state";
+			power-state-name="soft-off";
+			substate-id = <2>;
+		};
+	};
+
+	soc {
+		itcm: itcm@0 {
+			compatible = "nxp,imx-itcm";
+			reg = <0x0 DT_SIZE_K(128)>;
+		};
+
+		dtcm: dtcm@20000000 {
+			compatible = "nxp,imx-dtcm";
+			reg = <0x20000000 DT_SIZE_K(128)>;
+		};
+
+		ocram_code: code@900000 {
+			compatible = "nxp,imx-code-bus";
+			reg = <0x00900000 DT_SIZE_K(576)>;
+			label = "OCRAM CODE";
+		};
+
+		ocram_sys: memory@20200000 {
+			device_type = "memory";
+			compatible = "nxp,imx-sys-bus";
+			reg = <0x20200000 DT_SIZE_K(576)>;
+			label = "OCRAM SYSTEM";
+		};
+
+		ocram_s_code: code@180000 {
+			compatible = "nxp,imx-code-bus";
+			reg = <0x00180000 DT_SIZE_K(36)>;
+			label = "OCRAM_S CODE";
+		};
+
+		ocram_s_sys: memory@20180000 {
+			device_type = "memory";
+			compatible = "nxp,imx-sys-bus";
+			reg = <0x20180000 DT_SIZE_K(36)>;
+			label = "OCRAM_S SYSTEM";
+		};
+
+		ddr_code: code@80000000 {
+			device_type = "memory";
+			compatible = "nxp,imx-code-bus";
+			reg = <0x80000000 DT_SIZE_M(2)>;
+			label = "DDR CODE";
+		};
+
+		ddr_sys: memory@80200000 {
+			device_type = "memory";
+			compatible = "nxp,imx-sys-bus";
+			reg = <0x80200000 DT_SIZE_M(2)>;
+			label = "DDR SYSTEM";
+		};
+
+		ccm: ccm@30380000 {
+			compatible = "nxp,imx-ccm";
+			reg = <0x30380000 DT_SIZE_K(64)>;
+			label = "CCM";
+			#clock-cells = <3>;
+		};
+
+		flexcan1: can@308c0000 {
+			compatible = "nxp,imx8mp-mcux-flexcan";
+			reg = <0x308c0000 DT_SIZE_K(64)>;
+			interrupts = <142 0>, <143 0>;
+			interrupt-names = "common", "error";
+			clocks = <&ccm IMX_CCM_CAN1_CLK 0x4350 32>;
+			clk-source = <0>;
+			label = "CAN_1";
+			sjw = <1>;
+			sample-point = <875>;
+			status = "disabled";
+		};
+
+		flexcan2: can@308d0000 {
+			compatible = "nxp,imx8mp-mcux-flexcan";
+			reg = <0x308d0000 DT_SIZE_K(64)>;
+			interrupts = <144 0>, <145 0>;
+			interrupt-names = "common", "error";
+			clocks = <&ccm IMX_CCM_CAN2_CLK 0x4360 32>;
+			clk-source = <0>;
+			label = "CAN_2";
+			sjw = <1>;
+			sample-point = <875>;
+			status = "disabled";
+		};
+
+		wdog1: wdog@30280000 {
+			compatible = "nxp,imx8mp-wdog";
+			reg = <0x30280000 DT_SIZE_K(64)>;
+			status = "disabled";
+			interrupts = <78 0>;
+			clocks = <&ccm IMX_CCM_WDOG1_CLK 0x4530 32>;
+			label = "WDOG_1";
+		};
+
+		wdog2: wdog@30290000 {
+			compatible = "nxp,imx8mp-wdog";
+			reg = <0x30290000 DT_SIZE_K(64)>;
+			status = "disabled";
+			interrupts = <79 0>;
+			clocks = <&ccm IMX_CCM_WDOG2_CLK 0x4540 32>;
+			label = "WDOG_2";
+		};
+
+		wdog3: wdog@302a0000 {
+			compatible = "nxp,imx8mp-wdog";
+			reg = <0x302a0000 DT_SIZE_K(64)>;
+			status = "disabled";
+			interrupts = <10 0>;
+			clocks = <&ccm IMX_CCM_WDOG3_CLK 0x4550 32>;
+			label = "WDOG_3";
+		};
+
+		gpio1: gpio@30200000 {
+			compatible = "nxp,imx-gpio";
+			reg = <0x30200000 DT_SIZE_K(64)>;
+			interrupts = <64 0>, <65 0>;
+			rdc = <(RDC_DOMAIN_PERM(A7_DOMAIN_ID,\
+					       RDC_DOMAIN_PERM_RW)|\
+			       RDC_DOMAIN_PERM(M7_DOMAIN_ID,\
+					       RDC_DOMAIN_PERM_RW))>;
+			label = "GPIO_1";
+			gpio-controller;
+			#gpio-cells = <2>;
+			status = "disabled";
+		};
+
+		gpio2: gpio@30210000 {
+			compatible = "nxp,imx-gpio";
+			reg = <0x30210000 DT_SIZE_K(64)>;
+			interrupts = <66 0>, <67 0>;
+			rdc = <(RDC_DOMAIN_PERM(A7_DOMAIN_ID,\
+					       RDC_DOMAIN_PERM_RW)|\
+			       RDC_DOMAIN_PERM(M7_DOMAIN_ID,\
+					       RDC_DOMAIN_PERM_RW))>;
+			label = "GPIO_2";
+			gpio-controller;
+			#gpio-cells = <2>;
+			status = "disabled";
+		};
+
+		gpio3: gpio@30220000 {
+			compatible = "nxp,imx-gpio";
+			reg = <0x30220000 DT_SIZE_K(64)>;
+			interrupts = <68 0>, <69 0>;
+			rdc = <(RDC_DOMAIN_PERM(A7_DOMAIN_ID,\
+					       RDC_DOMAIN_PERM_RW)|\
+			       RDC_DOMAIN_PERM(M7_DOMAIN_ID,\
+					       RDC_DOMAIN_PERM_RW))>;
+			label = "GPIO_3";
+			gpio-controller;
+			#gpio-cells = <2>;
+			status = "disabled";
+		};
+
+		gpio4: gpio@30230000 {
+			compatible = "nxp,imx-gpio";
+			reg = <0x30230000 DT_SIZE_K(64)>;
+			interrupts = <70 0>, <71 0>;
+			rdc = <(RDC_DOMAIN_PERM(A7_DOMAIN_ID,\
+					       RDC_DOMAIN_PERM_RW)|\
+			       RDC_DOMAIN_PERM(M7_DOMAIN_ID,\
+					       RDC_DOMAIN_PERM_RW))>;
+			label = "GPIO_4";
+			gpio-controller;
+			#gpio-cells = <2>;
+			status = "disabled";
+		};
+
+		gpio5: gpio@30240000 {
+			compatible = "nxp,imx-gpio";
+			reg = <0x30240000 DT_SIZE_K(64)>;
+			interrupts = <72 0>, <73 0>;
+			rdc = <(RDC_DOMAIN_PERM(A7_DOMAIN_ID,\
+					       RDC_DOMAIN_PERM_RW)|\
+			       RDC_DOMAIN_PERM(M7_DOMAIN_ID,\
+					       RDC_DOMAIN_PERM_RW))>;
+			label = "GPIO_5";
+			gpio-controller;
+			#gpio-cells = <2>;
+			status = "disabled";
+		};
+
+		i2c1: i2c@30a20000 {
+			compatible = "nxp,mcux-ii2c";
+			clock-frequency = <I2C_BITRATE_STANDARD>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			reg = <0x30a20000 DT_SIZE_K(64)>;
+			interrupts = <35 0>;
+			clocks = <&ccm IMX_CCM_I2C1_CLK 0x4170 32>;
+			label = "I2C_1";
+			status = "disabled";
+		};
+
+		i2c2: i2c@30a30000 {
+			compatible = "nxp,mcux-ii2c";
+			clock-frequency = <I2C_BITRATE_STANDARD>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			reg = <0x30a30000 DT_SIZE_K(64)>;
+			interrupts = <36 0>;
+			clocks = <&ccm IMX_CCM_I2C2_CLK 0x4180 32>;
+			label = "I2C_2";
+			status = "disabled";
+		};
+
+		i2c3: i2c@30a40000 {
+			compatible = "nxp,mcux-ii2c";
+			clock-frequency = <I2C_BITRATE_STANDARD>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			reg = <0x30a40000 DT_SIZE_K(64)>;
+			interrupts = <37 0>;
+			clocks = <&ccm IMX_CCM_I2C3_CLK 0x4190 32>;
+			label = "I2C_3";
+			status = "disabled";
+		};
+
+		i2c4: i2c@30a50000 {
+			compatible = "nxp,mcux-ii2c";
+			clock-frequency = <I2C_BITRATE_STANDARD>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			reg = <0x30a50000 DT_SIZE_K(64)>;
+			interrupts = <38 0>;
+			clocks = <&ccm IMX_CCM_I2C4_CLK 0x41a0 32>;
+			label = "I2C_4";
+			status = "disabled";
+		};
+
+		i2c5: i2c@30ad0000 {
+			compatible = "nxp,mcux-ii2c";
+			clock-frequency = <I2C_BITRATE_STANDARD>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			reg = <0x30ad0000 DT_SIZE_K(64)>;
+			interrupts = <76 0>;
+			clocks = <&ccm IMX_CCM_I2C5_CLK 0x4330 32>;
+			label = "I2C_5";
+			status = "disabled";
+		};
+
+		i2c6: i2c@30ae0000 {
+			compatible = "nxp,mcux-ii2c";
+			clock-frequency = <I2C_BITRATE_STANDARD>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			reg = <0x30ae0000 DT_SIZE_K(64)>;
+			interrupts = <77 0>;
+			clocks = <&ccm IMX_CCM_I2C6_CLK 0x4340 32>;
+			label = "I2C_6";
+			status = "disabled";
+		};
+
+		/*
+		 * For now only UART4 is supported and
+		 * tested with the serial driver
+		 */
+		uart4: uart@30a60000 {
+			compatible = "nxp,imx8mp-iuart";
+			reg = <0x30a60000 0x10000>;
+			interrupts = <29 3>;
+			clocks = <&ccm IMX_CCM_UART4_CLK 0x44c0 32>;
+			label = "UART_4";
+			status = "disabled";
+		};
+
+		mailbox0: mailbox@30ab0000 {
+			compatible = "nxp,imx-mu";
+			reg = <0x30ab0000 DT_SIZE_K(64)>;
+			interrupts = <97 0>;
+			label = "MAILBOX_0";
+			rdc = <(RDC_DOMAIN_PERM(A7_DOMAIN_ID,\
+					       RDC_DOMAIN_PERM_RW)|\
+			       RDC_DOMAIN_PERM(M7_DOMAIN_ID,\
+					       RDC_DOMAIN_PERM_RW))>;
+			status = "disabled";
+		};
+
+		/* GPT1 is used for the hardware timer, not as a standard counter */
+		gpt_hw_timer: gpt@302d0000 {
+			compatible = "nxp,gpt-hw-timer";
+			reg = <0x302d0000 0x4000>;
+			interrupts = <55 0>;
+			label = "GPT_HW_TIMER";
+			status = "okay";
+		};
+
+		gpt2: gpt@302e0000 {
+			compatible = "nxp,imx8mp-gpt";
+			reg = <0x302e0000 DT_SIZE_K(64)>;
+			interrupts = <54 0>;
+			gptfreq = <24000000>;
+			clocks = <&ccm IMX_CCM_GPT2_CLK 0x4110 32>;
+			label = "GPT_2";
+			status = "disabled";
+		};
+
+		gpt3: gpt@302f0000 {
+			compatible = "nxp,imx8mp-gpt";
+			reg = <0x302f0000 DT_SIZE_K(64)>;
+			interrupts = <53 0>;
+			gptfreq = <24000000>;
+			clocks = <&ccm IMX_CCM_GPT3_CLK 0x4120 32>;
+			label = "GPT_3";
+			status = "disabled";
+		};
+
+		gpt4: gpt@30700000 {
+			compatible = "nxp,imx8mp-gpt";
+			reg = <0x30700000 DT_SIZE_K(64)>;
+			interrupts = <52 0>;
+			gptfreq = <24000000>;
+			clocks = <&ccm IMX_CCM_GPT4_CLK 0x4130 32>;
+			label = "GPT_4";
+			status = "disabled";
+		};
+
+		gpt5: gpt@30710000 {
+			compatible = "nxp,imx8mp-gpt";
+			reg = <0x30710000 DT_SIZE_K(64)>;
+			interrupts = <51 0>;
+			gptfreq = <24000000>;
+			clocks = <&ccm IMX_CCM_GPT5_CLK 0x4140 32>;
+			label = "GPT_5";
+			status = "disabled";
+		};
+
+		gpt6: gpt@30720000 {
+			compatible = "nxp,imx8mp-gpt";
+			reg = <0x30720000 DT_SIZE_K(64)>;
+			interrupts = <46 0>;
+			gptfreq = <24000000>;
+			clocks = <&ccm IMX_CCM_GPT6_CLK 0x4150 32>;
+			label = "GPT_6";
+			status = "disabled";
+		};
+
+		flexspi: spi@30bb0000 {
+			compatible = "nxp,imx8mp-flexspi";
+			reg = <0x30bb0000 DT_SIZE_K(64)>, <0x08000000 0x10000000>;
+			interrupts = <107 0>;
+			clocks = <&ccm IMX_CCM_FLEXSPI_CLK 0x42f0 32>;
+			label = "FLEXSPI";
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "disabled";
+		};
+
+		ecspi1: spi@30820000 {
+			compatible = "nxp,imx8mp-mcux-ecspi";
+			reg = <0x30820000 DT_SIZE_K(64)>;
+			interrupts = <31 0>;
+			label = "SPI_1";
+			status = "disabled";
+			clocks = <&ccm IMX_CCM_ECSPI1_CLK 0x4070 0>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+		};
+
+		ecspi2: spi@30830000 {
+			compatible = "nxp,imx8mp-mcux-ecspi";
+			reg = <0x30830000 DT_SIZE_K(64)>;
+			interrupts = <32 0>;
+			label = "SPI_2";
+			status = "disabled";
+			clocks = <&ccm IMX_CCM_ECSPI2_CLK 0x4080 0>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+		};
+
+		ecspi3: spi@30840000 {
+			compatible = "nxp,imx8mp-mcux-ecspi";
+			reg = <0x30840000 DT_SIZE_K(64)>;
+			interrupts = <33 0>;
+			label = "SPI_3";
+			status = "disabled";
+			clocks = <&ccm IMX_CCM_ECSPI3_CLK 0x4090 0>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+		};
+
+		pwm1: pwm@30660000 {
+			compatible = "fsl,imx8mp-pwm";
+			reg = <0x30660000 DT_SIZE_K(64)>;
+			interrupts = <81 0>;
+			prescaler = <0>;
+			rdc = <(RDC_DOMAIN_PERM(A7_DOMAIN_ID,\
+					       RDC_DOMAIN_PERM_RW)|\
+			       RDC_DOMAIN_PERM(M7_DOMAIN_ID,\
+					       RDC_DOMAIN_PERM_RW))>;
+			label = "PWM_1";
+			status = "disabled";
+			#pwm-cells = <2>;
+			clocks = <&ccm IMX_CCM_PWM1_CLK 0x4280 32>;
+		};
+
+		pwm2: pwm@30670000 {
+			compatible = "fsl,imx8mp-pwm";
+			reg = <0x30670000 DT_SIZE_K(64)>;
+			interrupts = <82 0>;
+			prescaler = <0>;
+			rdc = <(RDC_DOMAIN_PERM(A7_DOMAIN_ID,\
+					       RDC_DOMAIN_PERM_RW)|\
+			       RDC_DOMAIN_PERM(M7_DOMAIN_ID,\
+					       RDC_DOMAIN_PERM_RW))>;
+			label = "PWM_2";
+			status = "disabled";
+			#pwm-cells = <2>;
+			clocks = <&ccm IMX_CCM_PWM2_CLK 0x4290 32>;
+		};
+
+		pwm3: pwm@30680000 {
+			compatible = "fsl,imx8mp-pwm";
+			reg = <0x30680000 DT_SIZE_K(64)>;
+			interrupts = <83 0>;
+			prescaler = <0>;
+			label = "PWM_3";
+			status = "disabled";
+			#pwm-cells = <2>;
+			clocks = <&ccm IMX_CCM_PWM3_CLK 0x42a0 32>;
+		};
+
+		pwm4: pwm@30690000 {
+			compatible = "fsl,imx8mp-pwm";
+			reg = <0x30690000 DT_SIZE_K(64)>;
+			interrupts = <84 0>;
+			prescaler = <0>;
+			rdc = <(RDC_DOMAIN_PERM(A7_DOMAIN_ID,\
+					       RDC_DOMAIN_PERM_RW)|\
+			       RDC_DOMAIN_PERM(M7_DOMAIN_ID,\
+					       RDC_DOMAIN_PERM_RW))>;
+			label = "PWM_4";
+			status = "disabled";
+			#pwm-cells = <2>;
+			clocks = <&ccm IMX_CCM_PWM4_CLK 0x42b0 32>;
+		};
+	};
+};
+
+&nvic {
+	arm,num-irq-priority-bits = <4>;
+};
+
+&systick {
+	/*
+	 * i.MX 8M Plus M7 core relies by default on the GPT Timer for system clock
+	 * implementation, so the SysTick node should not be enabled.
+	 */
+	status = "disabled";
+};

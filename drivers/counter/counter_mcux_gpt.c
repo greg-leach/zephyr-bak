@@ -4,7 +4,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#ifdef CONFIG_SOC_PART_NUMBER_IMX8ML_M7
+#define DT_DRV_COMPAT nxp_imx8mp_gpt
+#else
 #define DT_DRV_COMPAT nxp_imx_gpt
+#endif
 
 #include <drivers/counter.h>
 #include <drivers/clock_control.h>
@@ -167,6 +171,13 @@ static int mcux_gpt_init(const struct device *dev)
 	const struct mcux_gpt_config *config = dev->config;
 	gpt_config_t gptConfig;
 	uint32_t clock_freq;
+	int err;
+
+	err = clock_control_on(config->clock_dev, config->clock_subsys);
+	if (err) {
+		LOG_ERR("Failed to enable clock (err %d)", err);
+		return -EINVAL;
+	}
 
 	if (clock_control_get_rate(config->clock_dev, config->clock_subsys,
 				   &clock_freq)) {

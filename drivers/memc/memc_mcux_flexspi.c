@@ -3,9 +3,13 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
-
+#ifdef CONFIG_SOC_PART_NUMBER_IMX8ML_M7
+#define DT_DRV_COMPAT	nxp_imx8mp_flexspi
+#else
 #define DT_DRV_COMPAT	nxp_imx_flexspi
+#endif
 
+#include <drivers/clock_control.h>
 #include <logging/log.h>
 #include <sys/util.h>
 
@@ -36,6 +40,10 @@ struct memc_flexspi_config {
 	bool combination_mode;
 	bool sck_differential_clock;
 	flexspi_read_sample_clock_t rx_sample_clock;
+#ifdef CONFIG_SOC_PART_NUMBER_IMX8ML_M7
+	const struct device *clock_dev;
+	clock_control_subsys_t clock_subsys;
+#endif
 };
 
 struct memc_flexspi_data {
@@ -126,12 +134,23 @@ static int memc_flexspi_init(const struct device *dev)
 {
 	const struct memc_flexspi_config *config = dev->config;
 	flexspi_config_t flexspi_config;
+#ifdef CONFIG_SOC_PART_NUMBER_IMX8ML_M7
+	int error;
+#endif
 
 	/* we should not configure the device we are running on */
 	if (memc_flexspi_is_running_xip(dev)) {
 		LOG_DBG("XIP active on %s, skipping init", dev->name);
 		return 0;
 	}
+
+#ifdef CONFIG_SOC_PART_NUMBER_IMX8ML_M7
+	error = clock_control_on(config->clock_dev, config->clock_subsys);
+	if (error) {
+		LOG_ERR("Failed to enable clock (err %d)", error);
+		return -EINVAL;
+	}
+#endif
 
 	FLEXSPI_GetDefaultConfig(&flexspi_config);
 
@@ -161,6 +180,35 @@ static int memc_flexspi_init(const struct device *dev)
 #define MEMC_FLEXSPI_CFG_XIP(node_id) false
 #endif
 
+#ifdef CONFIG_SOC_PART_NUMBER_IMX8ML_M7
+#define MEMC_FLEXSPI(n)							\
+	static const struct memc_flexspi_config				\
+		memc_flexspi_config_##n = {				\
+		.base = (FLEXSPI_Type *) DT_INST_REG_ADDR(n),		\
+		.xip = MEMC_FLEXSPI_CFG_XIP(DT_DRV_INST(n)),		\
+		.ahb_base = (uint8_t *) DT_INST_REG_ADDR_BY_IDX(n, 1),	\
+		.ahb_bufferable = DT_INST_PROP(n, ahb_bufferable),	\
+		.ahb_cacheable = DT_INST_PROP(n, ahb_cacheable),	\
+		.ahb_prefetch = DT_INST_PROP(n, ahb_prefetch),		\
+		.ahb_read_addr_opt = DT_INST_PROP(n, ahb_read_addr_opt),\
+		.combination_mode = DT_INST_PROP(n, combination_mode),	\
+		.sck_differential_clock = DT_INST_PROP(n, sck_differential_clock),	\
+		.rx_sample_clock = DT_INST_PROP(n, rx_clock_source),	\
+		.clock_dev = DEVICE_DT_GET(DT_INST_CLOCKS_CTLR(n)),		\
+		.clock_subsys = (clock_control_subsys_t)DT_INST_CLOCKS_CELL(n, name),\
+	};								\
+									\
+	static struct memc_flexspi_data memc_flexspi_data_##n;		\
+									\
+	DEVICE_DT_INST_DEFINE(n,					\
+			      memc_flexspi_init,			\
+			      NULL,					\
+			      &memc_flexspi_data_##n,			\
+			      &memc_flexspi_config_##n,			\
+			      POST_KERNEL,				\
+			      CONFIG_KERNEL_INIT_PRIORITY_DEVICE,	\
+			      NULL);
+#else
 #define MEMC_FLEXSPI(n)							\
 	static const struct memc_flexspi_config				\
 		memc_flexspi_config_##n = {				\
@@ -186,5 +234,6 @@ static int memc_flexspi_init(const struct device *dev)
 			      POST_KERNEL,				\
 			      CONFIG_KERNEL_INIT_PRIORITY_DEVICE,	\
 			      NULL);
+#endif
 
 DT_INST_FOREACH_STATUS_OKAY(MEMC_FLEXSPI)

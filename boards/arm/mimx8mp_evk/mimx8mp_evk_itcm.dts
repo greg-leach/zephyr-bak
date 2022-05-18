@@ -1,0 +1,61 @@
+/*
+ * Copyright (c) 2021, Laird Connectivity
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/dts-v1/;
+
+#include <nxp/nxp_imx8ml_m7.dtsi>
+
+/ {
+	model = "NXP i.MX8M Plus EVK board";
+	compatible = "nxp,mimx8mp_evk";
+
+	chosen {
+		/* TCM */
+		zephyr,flash = &itcm;
+		zephyr,sram = &dtcm;
+
+		zephyr,console = &uart4;
+		zephyr,shell-uart = &uart4;
+
+		zephyr,flash-controller = &flexspi;
+		zephyr,flash = &mt25qu256aba;
+		zephyr,canbus = &flexcan1;
+		zephyr,can-primary = &flexcan1;
+	};
+};
+
+&uart4 {
+	status = "okay";
+	current-speed = <115200>;
+};
+
+&gpio3 {
+	status = "okay";
+};
+
+&mailbox0 {
+	status = "okay";
+};
+
+&flexcan1 {
+	bus-speed = <1000000>;
+};
+
+&flexcan2 {
+	bus-speed = <1000000>;
+};
+
+&flexspi {
+	mt25qu256aba: mt25qu256aba@0 {
+		compatible = "nxp,imx-flexspi-nor", "jedec,spi-nor";
+		reg = <0>;
+		spi-max-frequency = <80000000>;
+		status = "okay";
+		jedec-id = [bb 19 20];
+		size = <DT_SIZE_M(32)>;
+		label = "FLASH_0";
+	};
+};

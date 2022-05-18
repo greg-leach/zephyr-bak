@@ -4,7 +4,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#ifdef CONFIG_SOC_PART_NUMBER_IMX8ML_M7
+#define DT_DRV_COMPAT nxp_imx8mp_iuart
+#else
 #define DT_DRV_COMPAT nxp_imx_iuart
+#endif
 
 #include <device.h>
 #include <drivers/uart.h>
@@ -226,6 +230,12 @@ static int mcux_iuart_init(const struct device *dev)
 	const struct mcux_iuart_config *config = DEV_CFG(dev);
 	uart_config_t uart_config;
 	uint32_t clock_freq;
+	int error;
+
+	error = clock_control_on(config->clock_dev, config->clock_subsys);
+	if (error) {
+		return -EINVAL;
+	}
 
 	if (clock_control_get_rate(config->clock_dev, config->clock_subsys,
 				   &clock_freq)) {

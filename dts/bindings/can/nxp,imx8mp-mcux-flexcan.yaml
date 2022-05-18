@@ -1,0 +1,33 @@
+# Copyright (c) 2022, Laird Connectivity
+# SPDX-License-Identifier: Apache-2.0
+
+description: NXP MCUX FlexCAN controller (i.MX 8M Plus SoC)
+
+compatible: "nxp,imx8mp-mcux-flexcan"
+
+include: nxp,kinetis-flexcan.yaml
+
+properties:
+    clock-rootmux:
+      type: int
+      required: false
+      default: 4
+      enum:
+        - 0 # Clock from OSC 24M
+        - 1 # Clock from SYSTEM PLL2 divided by 5
+        - 2 # Clock from SYSTEM PLL1 divided by 20
+        - 3 # Clock from SYSTEM PLL1 divided by 5
+        - 4 # Clock from SYSTEM PLL1
+        - 5 # Clock from SYSTEM PLL3
+        - 6 # Clock from SYSTEM PLL2 divided by 4
+        - 7 # Clock from AUDIO PLL2
+
+    clock-root-pre-divider:
+      type: int
+      required: false
+      default: 2
+
+    clock-root-post-divider:
+      type: int
+      required: false
+      default: 5

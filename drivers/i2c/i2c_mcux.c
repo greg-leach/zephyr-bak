@@ -4,7 +4,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <sys/util.h>
+
+#if IS_ENABLED(CONFIG_I2C_MCUX_II2C)
+#define DT_DRV_COMPAT nxp_mcux_ii2c
+#else
 #define DT_DRV_COMPAT nxp_kinetis_i2c
+#endif
 
 #include <errno.h>
 #include <drivers/i2c.h>
@@ -12,6 +18,9 @@
 #include <fsl_i2c.h>
 #include <fsl_clock.h>
 #include <sys/util.h>
+#if IS_ENABLED(CONFIG_I2C_MCUX_II2C)
+#include <drivers/clock_control.h>
+#endif
 
 #include <logging/log.h>
 LOG_MODULE_REGISTER(i2c_mcux);
@@ -27,7 +36,12 @@ LOG_MODULE_REGISTER(i2c_mcux);
 
 struct i2c_mcux_config {
 	I2C_Type *base;
+#if IS_ENABLED(CONFIG_I2C_MCUX_II2C)
+	const struct device *clock_dev;
+	clock_control_subsys_t clock_subsys;
+#else
 	clock_name_t clock_source;
+#endif
 	void (*irq_config_func)(const struct device *dev);
 	uint32_t bitrate;
 };
@@ -70,7 +84,14 @@ static int i2c_mcux_configure(const struct device *dev,
 		return -EINVAL;
 	}
 
+#if IS_ENABLED(CONFIG_I2C_MCUX_II2C)
+	if (clock_control_get_rate(config->clock_dev, config->clock_subsys, &clock_freq)) {
+		LOG_ERR("Could not get clock frequency");
+		return -EINVAL;
+	}
+#else
 	clock_freq = CLOCK_GetFreq(config->clock_source);
+#endif
 	k_sem_take(&data->lock, K_FOREVER);
 	I2C_MasterSetBaudRate(base, baudrate, clock_freq);
 	k_sem_give(&data->lock);
@@ -141,6 +162,7 @@ static int i2c_mcux_transfer(const struct device *dev, struct i2c_msg *msgs,
 			transfer.flags |= kI2C_TransferNoStartFlag;
 		}
 
+#if IS_ENABLED(I2C_MCUX_NONBLOCKING_TRANSFERS)
 		/* Start the transfer */
 		status = I2C_MasterTransferNonBlocking(base,
 				&data->handle, &transfer);
@@ -165,6 +187,16 @@ static int i2c_mcux_transfer(const struct device *dev, struct i2c_msg *msgs,
 			ret = -EIO;
 			break;
 		}
+#else
+		/* Initiate a blocking transfer and return an error if the transfer
+		 * didn't complete successfully
+		 */
+		status = I2C_MasterTransferBlocking(base, &transfer);
+		if (status != kStatus_Success) {
+			ret = -EIO;
+			break;
+		}
+#endif
 
 		/* Move to the next message */
 		msgs++;
@@ -195,7 +227,20 @@ static int i2c_mcux_init(const struct device *dev)
 	k_sem_init(&data->lock, 1, 1);
 	k_sem_init(&data->device_sync_sem, 0, K_SEM_MAX_LIMIT);
 
+#if IS_ENABLED(CONFIG_I2C_MCUX_II2C)
+	error = clock_control_on(config->clock_dev, config->clock_subsys);
+	if (error) {
+		LOG_ERR("Failed to enable clock (err %d)", error);
+		return -EINVAL;
+	}
+
+	if (clock_control_get_rate(config->clock_dev, config->clock_subsys, &clock_freq)) {
+		LOG_ERR("Could not get clock frequency");
+		return -EINVAL;
+	}
+#else
 	clock_freq = CLOCK_GetFreq(config->clock_source);
+#endif
 	I2C_MasterGetDefaultConfig(&master_config);
 	I2C_MasterInit(base, &master_config, clock_freq);
 	I2C_MasterTransferCreateHandle(base, &data->handle,
@@ -218,6 +263,37 @@ static const struct i2c_driver_api i2c_mcux_driver_api = {
 	.transfer = i2c_mcux_transfer,
 };
 
+#if IS_ENABLED(CONFIG_I2C_MCUX_II2C)
+#define I2C_DEVICE_INIT_MCUX(n)			\
+	static void i2c_mcux_config_func_ ## n(const struct device *dev); \
+									\
+	static const struct i2c_mcux_config i2c_mcux_config_ ## n = {	\
+		.base = (I2C_Type *)DT_INST_REG_ADDR(n),\
+		.clock_dev = DEVICE_DT_GET(DT_INST_CLOCKS_CTLR(n)),		\
+		.clock_subsys = (clock_control_subsys_t)DT_INST_CLOCKS_CELL(n, name),\
+		.irq_config_func = i2c_mcux_config_func_ ## n,		\
+		.bitrate = DT_INST_PROP(n, clock_frequency),		\
+	};								\
+									\
+	static struct i2c_mcux_data i2c_mcux_data_ ## n;		\
+									\
+	DEVICE_DT_INST_DEFINE(n,					\
+			&i2c_mcux_init, NULL,				\
+			&i2c_mcux_data_ ## n,				\
+			&i2c_mcux_config_ ## n, POST_KERNEL,		\
+			CONFIG_KERNEL_INIT_PRIORITY_DEVICE,		\
+			&i2c_mcux_driver_api);				\
+									\
+	static void i2c_mcux_config_func_ ## n(const struct device *dev) \
+	{								\
+		IRQ_CONNECT(DT_INST_IRQN(n),				\
+			DT_INST_IRQ(n, priority),			\
+			i2c_mcux_isr,					\
+			DEVICE_DT_INST_GET(n), 0);			\
+									\
+		irq_enable(DT_INST_IRQN(n));				\
+	}
+#else
 #define I2C_DEVICE_INIT_MCUX(n)			\
 	static void i2c_mcux_config_func_ ## n(const struct device *dev); \
 									\
@@ -246,5 +322,6 @@ static const struct i2c_driver_api i2c_mcux_driver_api = {
 									\
 		irq_enable(DT_INST_IRQN(n));				\
 	}
+#endif
 
 DT_INST_FOREACH_STATUS_OKAY(I2C_DEVICE_INIT_MCUX)
