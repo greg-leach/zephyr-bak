@@ -1,0 +1,55 @@
+# Summit SOM 8M series defconfig
+
+# Copyright (c) 2022, Laird Connectivity
+# SPDX-License-Identifier: Apache-2.0
+
+if SOC_SERIES_SUMMIT_SOM8M
+
+config SOC_SERIES
+	default "summit_som8m"
+
+config NUM_IRQS
+	int
+	# must be >= the highest interrupt number used
+	default 159
+
+if COUNTER
+
+config COUNTER_MCUX_GPT
+	default y if HAS_MCUX_GPT
+
+endif # COUNTER
+
+config CAN_MCUX_FLEXCAN
+	default y if HAS_MCUX_FLEXCAN
+	depends on CAN
+
+config GPIO_MCUX_IGPIO
+	default y if HAS_MCUX_IGPIO
+	depends on GPIO
+
+config PWM_IMX
+	default y
+	depends on PWM
+
+config AUDIOMIX
+	bool "Enable AUDIOMIX"
+	default n
+	depends on HAS_MCUX_AUDIOMIX
+	select SYSTEM_PLL1
+
+config WDT_MCUX_IMX_WDOG
+	default y
+	depends on WATCHDOG
+
+config PM_MCUX_GPC
+	default y if HAS_MCUX_GPC
+	depends on PM
+
+config SPI_MCUX_ECSPI
+	default y if HAS_MCUX_ECSPI
+	depends on SPI
+
+source "soc/arm/lairdconnectivity/summit_som8m/Kconfig.defconfig.summit_som8mplus"
+
+endif # SOC_SERIES_SUMMIT_SOM8M

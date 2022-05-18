@@ -1,0 +1,19 @@
+# Copyright (c) 2022, Laird Connectivity
+# SPDX-License-Identifier: Apache-2.0
+
+config SOC_FAMILY_SOM8M
+	bool
+	select HAS_SEGGER_RTT
+
+if SOC_FAMILY_SOM8M
+
+config SOC_FAMILY
+	string
+	default "lairdconnectivity"
+
+source "soc/arm/lairdconnectivity/*/Kconfig.soc"
+
+config SOC_PART_NUMBER
+	default SOC_PART_NUMBER_IMX8ML_M7 if SOC_SERIES_SUMMIT_SOM8M
+
+endif # SOC_FAMILY_SOM8M

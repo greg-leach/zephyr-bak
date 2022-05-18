@@ -1,0 +1,14 @@
+# Summit SOM 8M series
+
+# Copyright (c) 2022, Laird Connectivity
+# SPDX-License-Identifier: Apache-2.0
+
+config SOC_SERIES_SUMMIT_SOM8M
+	bool "Summit SOM8M Series"
+	select ARM
+	select CPU_CORTEX_M7
+	select SOC_FAMILY_SOM8M
+	select CPU_HAS_FPU
+	select CLOCK_CONTROL
+	help
+	  Enable support for Summit SOM8M series
