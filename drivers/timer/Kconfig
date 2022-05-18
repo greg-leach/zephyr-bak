@@ -414,4 +414,6 @@ config MCUX_LPTMR_TIMER
 	  Power Timer (LPTMR) and provides the standard "system clock driver"
 	  interfaces.
 
+source "drivers/timer/Kconfig.mcux_gpt"
+
 endmenu

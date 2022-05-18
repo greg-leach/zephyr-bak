@@ -4,7 +4,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#ifdef CONFIG_SOC_PART_NUMBER_IMX8ML_M7
+#define DT_DRV_COMPAT nxp_imx8mp_mcux_flexcan
+#else
 #define DT_DRV_COMPAT nxp_kinetis_flexcan
+#endif
 
 #include <zephyr.h>
 #include <sys/atomic.h>
@@ -685,6 +689,12 @@ static int mcux_flexcan_init(const struct device *dev)
 	struct mcux_flexcan_data *data = dev->data;
 	int err;
 	int i;
+
+	err = clock_control_on(config->clock_dev, config->clock_subsys);
+	if (err) {
+		LOG_ERR("Failed to enable clock (err %d)", err);
+		return -EINVAL;
+	}
 
 	k_mutex_init(&data->rx_mutex);
 	k_sem_init(&data->tx_allocs_sem, 0, 1);

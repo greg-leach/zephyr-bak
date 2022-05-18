@@ -4,8 +4,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#ifdef CONFIG_SOC_PART_NUMBER_IMX8ML_M7
+#define DT_DRV_COMPAT nxp_imx8mp_wdog
+#else
 #define DT_DRV_COMPAT nxp_imx_wdog
+#endif
 
+#include <drivers/clock_control.h>
 #include <drivers/watchdog.h>
 #include <fsl_wdog.h>
 
@@ -17,6 +22,10 @@ LOG_MODULE_REGISTER(wdt_mcux_wdog);
 
 struct mcux_wdog_config {
 	WDOG_Type *base;
+#ifdef CONFIG_SOC_PART_NUMBER_IMX8ML_M7
+	const struct device *clock_dev;
+	clock_control_subsys_t clock_subsys;
+#endif
 	void (*irq_config_func)(const struct device *dev);
 };
 
@@ -129,6 +138,15 @@ static void mcux_wdog_isr(void *arg)
 static int mcux_wdog_init(const struct device *dev)
 {
 	const struct mcux_wdog_config *config = dev->config;
+#ifdef CONFIG_SOC_PART_NUMBER_IMX8ML_M7
+	int error;
+
+	error = clock_control_on(config->clock_dev, config->clock_subsys);
+	if (error) {
+		LOG_ERR("Failed to enable clock (err %d)", error);
+		return -EINVAL;
+	}
+#endif
 
 	config->irq_config_func(dev);
 
@@ -146,6 +164,10 @@ static void mcux_wdog_config_func(const struct device *dev);
 
 static const struct mcux_wdog_config mcux_wdog_config = {
 	.base = (WDOG_Type *) DT_INST_REG_ADDR(0),
+#ifdef CONFIG_SOC_PART_NUMBER_IMX8ML_M7
+	.clock_dev = DEVICE_DT_GET(DT_INST_CLOCKS_CTLR(0)),
+	.clock_subsys = (clock_control_subsys_t)DT_INST_CLOCKS_CELL(0, name),
+#endif
 	.irq_config_func = mcux_wdog_config_func,
 };
 

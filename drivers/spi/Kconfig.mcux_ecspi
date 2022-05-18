@@ -1,0 +1,10 @@
+# MCUXpresso SDK SPI
+
+# Copyright (c) 2022, Laird Connectivity
+# SPDX-License-Identifier: Apache-2.0
+
+config SPI_MCUX_ECSPI
+	bool "MCUX ECSPI driver"
+	depends on HAS_MCUX_ECSPI && CLOCK_CONTROL
+	help
+	  Enable support for mcux enhanced configurable SPI driver.

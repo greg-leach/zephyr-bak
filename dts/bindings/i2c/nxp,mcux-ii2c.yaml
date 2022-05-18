@@ -1,0 +1,44 @@
+# Copyright (c) 2022, Laird Connectivity
+# SPDX-License-Identifier: Apache-2.0
+
+description: NXP i.MX MCUX II2C controller
+
+compatible: "nxp,mcux-ii2c"
+
+include: i2c-controller.yaml
+
+properties:
+    reg:
+      required: true
+
+    interrupts:
+      required: true
+
+    bus-idle-timeout:
+      required: false
+      type: int
+      description: Bus idle timeout in nanoseconds
+
+    clock-rootmux:
+      type: int
+      required: false
+      default: 1
+      enum:
+        - 0 # Clock from OSC 24M
+        - 1 # Clock from SYSTEM PLL1 divided by 5
+        - 2 # Clock from SYSTEM PLL2 divided by 20
+        - 3 # Clock from SYSTEM PLL3
+        - 4 # Clock from AUDIO PLL1
+        - 5 # Clock from VIDEO PLL1
+        - 6 # Clock from AUDIO PLL2
+        - 7 # Clock from SYSTEM PLL1 divided by 6
+
+    clock-root-pre-divider:
+      type: int
+      required: false
+      default: 1
+
+    clock-root-post-divider:
+      type: int
+      required: false
+      default: 10

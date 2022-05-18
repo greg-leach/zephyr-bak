@@ -1,0 +1,85 @@
+# Copyright (c) 2022, Laird Connectivity
+# SPDX-License-Identifier: Apache-2.0
+
+description: NXP MCUX ECSPI controller
+
+compatible: "nxp,mcux-ecspi"
+
+include: spi-controller.yaml
+
+properties:
+    reg:
+      required: true
+
+    interrupts:
+      required: true
+
+    clocks:
+      required: true
+
+    chip-select-delay:
+      type: int
+      required: false
+      default: 0
+      description: |
+        This field defines how many SPI clocks will be inserted between the
+        chip select's active edge and the first SPI clock edge. The range is
+        from 0 to 63.
+
+    sample-period:
+      type: int
+      required: false
+      default: 0
+      description: |
+        This field controls the number of wait states to be inserted in data
+        transfers. The range is 0 to 32767.
+
+    sample-period-clock-source:
+      type: int
+      required: false
+      default: 0
+      description: |
+        This field selects the clock source for the sample period counter.
+      enum:
+        - 0 # SPI clock (SCLK)
+        - 1 # Low-frequency reference clock (32.768 kHz)
+
+    burst-length:
+      type: int
+      required: false
+      default: 8
+      description: |
+        This field defines the length of a SPI burst to be transferred. The Chip
+        Select (SS) will remain asserted until all bits in a SPI burst are
+        shifted out. A maximum of 2^12 bits can be transferred in a single SPI
+        burst.
+
+    clock-inactive-state:
+      type: int
+      required: false
+      default: 0
+      description: |
+        This field controls the inactive state of SCLK.
+      enum:
+        - 0 # Stay low
+        - 1 # Stay high
+
+    data-line-inactive-state:
+      type: int
+      required: false
+      default: 1
+      description: |
+        This field controls the inactive state of the data line (MISO & MOSI).
+      enum:
+        - 0 # Stay high
+        - 1 # Stay low
+
+    chip-select-active-state:
+      type: int
+      required: false
+      default: 0
+      description: |
+        This field selects the polarity of the Chip Select (SS) signal.
+      enum:
+        - 0 # Active low
+        - 1 # Active high

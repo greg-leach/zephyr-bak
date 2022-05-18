@@ -87,6 +87,20 @@ config I2C_MCUX
 	help
 	  Enable the mcux I2C driver.
 
+config I2C_MCUX_II2C
+	bool "MCUX II2C driver"
+	depends on HAS_MCUX && !I2C_MCUX
+	help
+	  Enable the mcux II2C I2C driver.
+
+config I2C_MCUX_NONBLOCKING_TRANSFERS
+	bool "Use MCUX I2C driver with non-blocking transfers"
+	depends on I2C_MCUX || I2C_MCUX_II2C
+	default y
+	help
+	  Enable the use of non-blocking transfers with the
+	  mcux I2C driver.
+
 config I2C_MCUX_FLEXCOMM
 	bool "MCUX FLEXCOMM I2C driver"
 	depends on HAS_MCUX_FLEXCOMM
