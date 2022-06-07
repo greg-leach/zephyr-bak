@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2015 Wind River Systems, Inc.
+ * Copyright (c) 2021 Laird Connectivity
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -11,8 +12,16 @@
 
 extern void sys_arch_reboot(int type);
 
+__weak void sys_reboot_notification(int type)
+{
+	return;
+}
+
 FUNC_NORETURN void sys_reboot(int type)
 {
+	/* Notify application of pending reboot */
+	sys_reboot_notification(type);
+
 	(void)irq_lock();
 	sys_clock_disable();
 
