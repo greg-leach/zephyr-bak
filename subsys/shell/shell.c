@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018 Nordic Semiconductor ASA
+ * Copyright (c) 2021 Laird Connectivity
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -633,6 +634,11 @@ static int execute(const struct shell *shell)
 	const char **argvp;
 	char *cmd_buf = shell->ctx->cmd_buff;
 	bool has_last_handler = false;
+	int32_t rc = 0;
+#if defined(CONFIG_SHELL_SELECTIVE_HISTORY)
+	uint8_t *history_tmp_buf = NULL;
+	uint32_t history_buf_size = 0;
+#endif
 
 	z_shell_op_cursor_end_move(shell);
 	if (!z_shell_cursor_in_empty_line(shell)) {
@@ -643,8 +649,22 @@ static int execute(const struct shell *shell)
 
 	if (IS_ENABLED(CONFIG_SHELL_HISTORY)) {
 		z_shell_cmd_trim(shell);
+
+#if defined(CONFIG_SHELL_SELECTIVE_HISTORY)
+		/* Save data in a buffer (if we have room) to check if it
+		 * should be saved later or not
+		 */
+		history_tmp_buf = malloc(shell->ctx->cmd_buff_len + 1);
+		if (history_tmp_buf != NULL) {
+			memcpy(history_tmp_buf, shell->ctx->cmd_buff,
+			       shell->ctx->cmd_buff_len);
+			history_tmp_buf[shell->ctx->cmd_buff_len] = 0;
+			history_buf_size = shell->ctx->cmd_buff_len;
+		}
+#else
 		history_put(shell, shell->ctx->cmd_buff,
 			    shell->ctx->cmd_buff_len);
+#endif
 	}
 
 	if (IS_ENABLED(CONFIG_SHELL_WILDCARD)) {
@@ -671,11 +691,13 @@ static int execute(const struct shell *shell)
 		cmd_buf = (char *)argvp[1];
 
 		if (argc == 0) {
-			return -ENOEXEC;
+			rc = -ENOEXEC;
+			break;
 		} else if ((argc == 1) && (quote != 0)) {
 			z_shell_fprintf(shell, SHELL_ERROR,
 					"not terminated: %c\n", quote);
-			return -ENOEXEC;
+			rc = -ENOEXEC;
+			break;
 		}
 
 		if (IS_ENABLED(CONFIG_SHELL_HELP) && (cmd_lvl > 0) &&
@@ -691,7 +713,8 @@ static int execute(const struct shell *shell)
 
 			z_shell_fprintf(shell, SHELL_ERROR,
 					SHELL_MSG_SPECIFY_SUBCOMMAND);
-			return -ENOEXEC;
+			rc = -ENOEXEC;
+			break;
 		}
 
 		if (IS_ENABLED(CONFIG_SHELL_WILDCARD) && (cmd_lvl > 0)) {
@@ -725,7 +748,8 @@ static int execute(const struct shell *shell)
 		if (entry) {
 			if (wildcard_check_report(shell, wildcard_found, entry)
 				== false) {
-				return -ENOEXEC;
+				rc = -ENOEXEC;
+				break;
 			}
 
 			active_cmd_prepare(entry, &shell->ctx->active_cmd,
@@ -753,40 +777,64 @@ static int execute(const struct shell *shell)
 
 	}
 
-	if ((cmd_lvl >= CONFIG_SHELL_ARGC_MAX) && (argc == 2)) {
-		/* argc == 2 indicates that when command string was parsed
-		 * there was more characters remaining. It means that number of
-		 * arguments exceeds the limit.
-		 */
-		z_shell_fprintf(shell, SHELL_ERROR, "%s\n",
-				SHELL_MSG_TOO_MANY_ARGS);
-		return -ENOEXEC;
-	}
-
-	if (IS_ENABLED(CONFIG_SHELL_WILDCARD) && wildcard_found) {
-		z_shell_wildcard_finalize(shell);
-		/* cmd_buffer has been overwritten by function finalize function
-		 * with all expanded commands. Hence shell_make_argv needs to
-		 * be called again.
-		 */
-		(void)z_shell_make_argv(&cmd_lvl,
-					&argv[selected_cmd_get(shell) ? 1 : 0],
-					shell->ctx->cmd_buff,
-					CONFIG_SHELL_ARGC_MAX);
-
-		if (selected_cmd_get(shell)) {
-			/* Apart from what is in the command buffer, there is
-			 * a selected command.
+	if (rc == 0) {
+		if ((cmd_lvl >= CONFIG_SHELL_ARGC_MAX) && (argc == 2)) {
+			/* argc == 2 indicates that when command string was
+			 * prased there was more characters remaining. It means
+			 * that number of arguments exceeds the limit.
 			 */
-			cmd_lvl++;
+			z_shell_fprintf(shell, SHELL_ERROR, "%s\n",
+					SHELL_MSG_TOO_MANY_ARGS);
+			rc = -ENOEXEC;
 		}
 	}
 
-	/* terminate arguments with NULL */
-	argv[cmd_lvl] = NULL;
-	/* Executing the deepest found handler. */
-	return exec_cmd(shell, cmd_lvl - cmd_with_handler_lvl,
-			&argv[cmd_with_handler_lvl], &help_entry);
+	if (rc == 0) {
+		if (IS_ENABLED(CONFIG_SHELL_WILDCARD) && wildcard_found) {
+			z_shell_wildcard_finalize(shell);
+			/* cmd_buffer has been overwritten by function finalize
+			 * function with all expanded commands. Hence
+			 * shell_make_argv needs to be called again
+			 */
+			(void)z_shell_make_argv(&cmd_lvl,
+						&argv[selected_cmd_get(shell) ? 1 : 0],
+						shell->ctx->cmd_buff,
+						CONFIG_SHELL_ARGC_MAX);
+
+			if (selected_cmd_get(shell)) {
+				/* Apart from what is in the command buffer,
+				 * there is a selected command.
+				 */
+				cmd_lvl++;
+			}
+		}
+	}
+
+	if (rc == 0) {
+		/* terminate arguments with NULL */
+		argv[cmd_lvl] = NULL;
+		/* Executing the deepest found handler. */
+		rc = exec_cmd(shell, cmd_lvl - cmd_with_handler_lvl,
+				&argv[cmd_with_handler_lvl], &help_entry);
+	}
+
+#if defined(CONFIG_SHELL_SELECTIVE_HISTORY)
+	if (history_tmp_buf != NULL) {
+		/* Check if we need to add this to the history */
+		if (shell->history->skip_current_line == true) {
+			/* Do not add, reset flag for next run */
+			shell->history->skip_current_line = false;
+		} else {
+			/* Append command to history */
+			history_put(shell, history_tmp_buf,
+				    history_buf_size);
+		}
+
+		free(history_tmp_buf);
+	}
+#endif
+
+	return rc;
 }
 
 static void tab_handle(const struct shell *shell)
