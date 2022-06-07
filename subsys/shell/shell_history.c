@@ -211,4 +211,7 @@ void z_shell_history_init(struct shell_history *history)
 {
 	sys_dlist_init(&history->list);
 	history->current = NULL;
+#if defined(CONFIG_SHELL_SELECTIVE_HISTORY)
+	history->skip_current_line = false;
+#endif
 }

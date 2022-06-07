@@ -190,6 +190,15 @@ config SHELL_HISTORY_BUFFER
 	help
 	  Number of bytes dedicated for storing executed commands.
 
+config SHELL_SELECTIVE_HISTORY
+	bool "Allow skipping of storing some shell command history"
+	depends on SHELL_HISTORY
+	help
+	  Allows the user-application to skip storing a command in the shell
+	  history if it is deemed sensitive or restricted for any reason. To
+	  hide a command, in the shell command set
+	  shell->history->skip_current_line to true
+
 config SHELL_STATS
 	bool "Shell statistics"
 	default y if !SHELL_MINIMAL
