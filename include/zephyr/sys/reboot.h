@@ -34,6 +34,17 @@ extern "C" {
  */
 extern FUNC_NORETURN void sys_reboot(int type);
 
+/**
+ * @brief Notification that the system is about to reboot. Note that this
+ * function should be used for cleaning up or saving data only and should not
+ * do anything that may cause a deadlock or take a long time to perform
+ *
+ * @param type The type of reboot being performed (warm or cold)
+ *
+ * @return N/A
+ */
+void sys_reboot_notification(int type);
+
 #ifdef __cplusplus
 }
 #endif
