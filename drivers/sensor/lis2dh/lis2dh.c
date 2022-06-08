@@ -438,6 +438,11 @@ static int lis2dh_pm_action(const struct device *dev,
 	int status;
 	struct lis2dh_data *lis2dh = dev->data;
 
+	if (!k_can_yield()) {
+		/* Cannot yield so I2C access cannot be used in the current mode */
+		return -ENOTSUP;
+	}
+
 	switch (action) {
 	case PM_DEVICE_ACTION_RESUME:
 		/* Resume previous mode. */
