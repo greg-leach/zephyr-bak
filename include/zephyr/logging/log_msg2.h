@@ -213,6 +213,7 @@ do { \
 	} \
 	struct log_msg2 *_msg; \
 	Z_LOG_MSG2_ON_STACK_ALLOC(_msg, Z_LOG_MSG2_LEN(_plen, 0)); \
+	compiler_barrier(); \
 	if (_plen) { \
 		CBPRINTF_STATIC_PACKAGE(_msg->data, _plen, \
 					_plen, Z_LOG_MSG2_ALIGN_OFFSET, flags, \
@@ -224,6 +225,7 @@ do { \
 	LOG_MSG2_DBG("creating message on stack: package len: %d, data len: %d\n", \
 			_plen, (int)(_dlen)); \
 	z_log_msg2_static_create((void *)_source, _desc, _msg->data, _data); \
+	compiler_barrier(); \
 } while (0)
 
 #ifdef CONFIG_LOG_SPEED
