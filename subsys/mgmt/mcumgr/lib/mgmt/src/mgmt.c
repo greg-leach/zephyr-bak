@@ -13,6 +13,7 @@
 #include "mgmt/mgmt.h"
 
 static mgmt_on_evt_cb evt_cb;
+static mgmt_perm_cb permission_cb;
 static struct mgmt_group *mgmt_group_list;
 static struct mgmt_group *mgmt_group_list_end;
 
@@ -114,6 +115,12 @@ mgmt_find_handler(uint16_t group_id, uint16_t command_id)
 {
 	const struct mgmt_group *group;
 
+	if (permission_cb) {
+		if (permission_cb(group_id, command_id) == false) {
+			return NULL;
+		}
+	}
+
 	group = mgmt_find_group(group_id, command_id);
 	if (!group) {
 		return NULL;
@@ -167,4 +174,10 @@ mgmt_evt(uint8_t opcode, uint16_t group, uint8_t id, void *arg)
 	if (evt_cb) {
 		evt_cb(opcode, group, id, arg);
 	}
+}
+
+void
+mgmt_register_permission_cb(mgmt_perm_cb cb)
+{
+	permission_cb = cb;
 }

@@ -107,6 +107,20 @@ struct mgmt_evt_op_cmd_done_arg {
  */
 typedef void (*mgmt_on_evt_cb)(uint8_t opcode, uint16_t group, uint8_t id, void *arg);
 
+/** @typedef mgmt_perm_cb
+ * @brief Function to be called to check to see if a command should be allowed
+ *
+ * This function is called before each command is processed. The application can
+ * return true to allow the command to be executed or false if the command should
+ * not be allowed.
+ *
+ * @param group_id Group of the command
+ * @param command_id Command identifier
+ *
+ * @returns true if the command should be allowed, false if not
+ */
+typedef bool (*mgmt_perm_cb)(uint16_t group_id, uint16_t command_id);
+
 /** @typedef mgmt_alloc_rsp_fn
  * @brief Allocates a buffer suitable for holding a response.
  *
@@ -359,6 +373,13 @@ void mgmt_register_evt_cb(mgmt_on_evt_cb cb);
  * @param arg		Optional event argument.
  */
 void mgmt_evt(uint8_t opcode, uint16_t group, uint8_t id, void *arg);
+
+/**
+ * @brief Register permission callback function.
+ *
+ * @param cb Callback function.
+ */
+void mgmt_register_permission_cb(mgmt_perm_cb cb);
 
 #ifdef __cplusplus
 }
