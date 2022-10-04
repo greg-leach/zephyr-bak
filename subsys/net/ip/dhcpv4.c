@@ -39,6 +39,8 @@ static struct k_work_delayable timeout_work;
 
 static struct net_mgmt_event_callback mgmt4_cb;
 
+static struct in_addr request_server_addr;
+
 /* RFC 1497 [17] */
 static const uint8_t magic_cookie[4] = { 0x63, 0x82, 0x53, 0x63 };
 
@@ -353,6 +355,8 @@ static uint32_t dhcpv4_send_request(struct net_if *iface)
 	case NET_DHCPV4_REQUESTING:
 		with_server_id = true;
 		with_requested_ip = true;
+		memcpy(&request_server_addr, &iface->config.dhcpv4.server_id,
+		       sizeof(struct in_addr));
 		break;
 	case NET_DHCPV4_RENEWING:
 		/* Since we have an address populate the ciaddr field.
@@ -941,10 +945,20 @@ static void dhcpv4_handle_msg_nak(struct net_if *iface)
 	case NET_DHCPV4_DISABLED:
 	case NET_DHCPV4_INIT:
 	case NET_DHCPV4_SELECTING:
+	case NET_DHCPV4_REQUESTING:
+		if (memcmp(&request_server_addr, &iface->config.dhcpv4.server_id,
+			   sizeof(request_server_addr)) == 0) {
+			LOG_DBG("NAK from requesting server %s, restart config",
+				net_sprint_ipv4_addr(&request_server_addr));
+			dhcpv4_enter_selecting(iface);
+		} else {
+			LOG_DBG("NAK from non-requesting server %s, ignore it",
+				net_sprint_ipv4_addr(&iface->config.dhcpv4.server_id));
+		}
+		break;
 	case NET_DHCPV4_RENEWING:
 	case NET_DHCPV4_BOUND:
 		break;
-	case NET_DHCPV4_REQUESTING:
 	case NET_DHCPV4_REBINDING:
 		/* Restart the configuration process. */
 		dhcpv4_enter_selecting(iface);
