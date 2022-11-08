@@ -419,6 +419,11 @@ config LWM2M_FIRMWARE_UPDATE_PULL_SUPPORT
 	  block transfer and "FIRMWARE PACKAGE URI" resource.  This option
 	  adds another UDP context and packet handling.
 
+config LWM2M_FIRMWARE_UPDATE_PULL_TLS_TAG
+	int "TLS tag for firmware pull context"
+	default 0
+	range 0 65535
+
 config LWM2M_SWMGMT_OBJ_SUPPORT
 	bool "Software management object support"
 	help
@@ -461,12 +466,6 @@ config LWM2M_FIRMWARE_UPDATE_PULL_COAP_PROXY_SUPPORT
 	depends on LWM2M_FIRMWARE_UPDATE_PULL_SUPPORT
 	help
 	  Include support for pulling firmware file via a CoAP-CoAP/HTTP proxy.
-
-config LWM2M_FIRMWARE_UPDATE_PULL_COAP_PROXY_ADDR
-	string "CoAP proxy network address"
-	depends on LWM2M_FIRMWARE_UPDATE_PULL_COAP_PROXY_SUPPORT
-	help
-	  Network address of the CoAP proxy server.
 
 config LWM2M_RW_OMA_TLV_SUPPORT
 	bool "TLV data format"

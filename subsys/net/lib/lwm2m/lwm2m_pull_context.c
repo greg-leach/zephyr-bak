@@ -14,6 +14,7 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 #include <ctype.h>
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
 
 #include <zephyr/net/http_parser.h>
 #include <zephyr/net/socket.h>
@@ -29,20 +30,27 @@ static K_SEM_DEFINE(lwm2m_pull_sem, 1, 1);
 #define PACKET_TRANSFER_RETRY_MAX 3
 
 #if defined(CONFIG_LWM2M_FIRMWARE_UPDATE_PULL_COAP_PROXY_SUPPORT)
+#define URL_PROTO_HTTPS_LEN 5
+#define URL_PROTO_HTTP_LEN 4
+#define URL_PROTO_HTTP "http"
+#define URL_PROTO_COAPS_LEN 5
+#define URL_PROTO_COAP_LEN 4
+#define URL_PROTO_COAP "coap"
+
 #define COAP2COAP_PROXY_URI_PATH "coap2coap"
 #define COAP2HTTP_PROXY_URI_PATH "coap2http"
-
-static char proxy_uri[LWM2M_PACKAGE_URI_LEN];
 #endif
 
 static struct firmware_pull_context {
 	uint8_t obj_inst_id;
 	char uri[LWM2M_PACKAGE_URI_LEN];
+	char proxy_uri[LWM2M_PACKAGE_URI_LEN];
 	bool is_firmware_uri;
 	void (*result_cb)(uint16_t obj_inst_id, int error_code);
 	lwm2m_engine_set_data_cb_t write_cb;
 
 	struct lwm2m_ctx firmware_ctx;
+	struct lwm2m_ctx *firmware_ctx_ptr;
 	struct coap_block_context block_ctx;
 } context;
 
@@ -51,11 +59,14 @@ static int n_retry;
 static void do_transmit_timeout_cb(struct lwm2m_message *msg);
 
 /**
- * Close all open connections and release the context semaphore
+ * Release the context semaphore and close any connections that were opened
+ * for the pull transfer. If a connection was reused, it will not be closed.
  */
 static void cleanup_context(void)
 {
-	lwm2m_engine_stop(&context.firmware_ctx);
+	if (context.firmware_ctx_ptr == &(context.firmware_ctx)) {
+		lwm2m_engine_stop(context.firmware_ctx_ptr);
+	}
 
 	k_sem_give(&lwm2m_pull_sem);
 }
@@ -66,13 +77,11 @@ static int transfer_request(struct coap_block_context *ctx, uint8_t *token, uint
 	struct lwm2m_message *msg;
 	int ret;
 	char *cursor;
-#if !defined(CONFIG_LWM2M_FIRMWARE_UPDATE_PULL_COAP_PROXY_SUPPORT)
 	struct http_parser_url parser;
 	uint16_t off, len;
 	char *next_slash;
-#endif
 
-	msg = lwm2m_get_message(&context.firmware_ctx);
+	msg = lwm2m_get_message(context.firmware_ctx_ptr);
 	if (!msg) {
 		LOG_ERR("Unable to get a lwm2m message!");
 		return -ENOMEM;
@@ -93,61 +102,67 @@ static int transfer_request(struct coap_block_context *ctx, uint8_t *token, uint
 	}
 
 #if defined(CONFIG_LWM2M_FIRMWARE_UPDATE_PULL_COAP_PROXY_SUPPORT)
-	/* TODO: shift to lower case */
-	if (strncmp(context.uri, "http", 4) == 0) {
-		cursor = COAP2HTTP_PROXY_URI_PATH;
-	} else if (strncmp(context.uri, "coap", 4) == 0) {
-		cursor = COAP2COAP_PROXY_URI_PATH;
-	} else {
-		ret = -EPROTONOSUPPORT;
-		LOG_ERR("Unsupported schema");
-		goto cleanup;
-	}
+	if (strlen(context.proxy_uri) > 0) {
+		if (strlen(context.uri) >= URL_PROTO_HTTPS_LEN &&
+		    strncasecmp(context.uri, URL_PROTO_HTTP, URL_PROTO_HTTP_LEN) == 0) {
+			cursor = COAP2HTTP_PROXY_URI_PATH;
+		} else if (strlen(context.uri) >= URL_PROTO_COAPS_LEN &&
+			   strncasecmp(context.uri, URL_PROTO_COAP, URL_PROTO_COAP_LEN) == 0) {
+			cursor = COAP2COAP_PROXY_URI_PATH;
+		} else {
+			ret = -EPROTONOSUPPORT;
+			LOG_ERR("Unsupported protocol in URL: %s", context.uri);
+			goto cleanup;
+		}
 
-	ret = coap_packet_append_option(&msg->cpkt, COAP_OPTION_URI_PATH, cursor, strlen(cursor));
-	if (ret < 0) {
-		LOG_ERR("Error adding URI_PATH '%s'", cursor);
-		goto cleanup;
-	}
-#else
-	http_parser_url_init(&parser);
-	ret = http_parser_parse_url(context.uri, strlen(context.uri), 0, &parser);
-	if (ret < 0) {
-		LOG_ERR("Invalid firmware url: %s", context.uri);
-		ret = -ENOTSUP;
-		goto cleanup;
-	}
+		ret = coap_packet_append_option(&msg->cpkt, COAP_OPTION_URI_PATH, cursor,
+						strlen(cursor));
+		if (ret < 0) {
+			LOG_ERR("Error adding URI_PATH '%s'", cursor);
+			goto cleanup;
+		}
+	} else
+#endif
+	{
+		http_parser_url_init(&parser);
+		ret = http_parser_parse_url(context.uri, strlen(context.uri), 0, &parser);
+		if (ret < 0) {
+			LOG_ERR("Invalid firmware url: %s", context.uri);
+			ret = -ENOTSUP;
+			goto cleanup;
+		}
 
-	/* if path is not available, off/len will be zero */
-	off = parser.field_data[UF_PATH].off;
-	len = parser.field_data[UF_PATH].len;
-	cursor = context.uri + off;
+		/* if path is not available, off/len will be zero */
+		off = parser.field_data[UF_PATH].off;
+		len = parser.field_data[UF_PATH].len;
+		cursor = context.uri + off;
 
-	/* add path portions (separated by slashes) */
-	while (len > 0 && (next_slash = strchr(cursor, '/')) != NULL) {
-		if (next_slash != cursor) {
+		/* add path portions (separated by slashes) */
+		while (len > 0 && (next_slash = strchr(cursor, '/')) != NULL) {
+			if (next_slash != cursor) {
+				ret = coap_packet_append_option(&msg->cpkt, COAP_OPTION_URI_PATH,
+								cursor, next_slash - cursor);
+				if (ret < 0) {
+					LOG_ERR("Error adding URI_PATH");
+					goto cleanup;
+				}
+			}
+
+			/* skip slash */
+			len -= (next_slash - cursor) + 1;
+			cursor = next_slash + 1;
+		}
+
+		if (len > 0) {
+			/* flush the rest */
 			ret = coap_packet_append_option(&msg->cpkt, COAP_OPTION_URI_PATH, cursor,
-							next_slash - cursor);
+							len);
 			if (ret < 0) {
 				LOG_ERR("Error adding URI_PATH");
 				goto cleanup;
 			}
 		}
-
-		/* skip slash */
-		len -= (next_slash - cursor) + 1;
-		cursor = next_slash + 1;
 	}
-
-	if (len > 0) {
-		/* flush the rest */
-		ret = coap_packet_append_option(&msg->cpkt, COAP_OPTION_URI_PATH, cursor, len);
-		if (ret < 0) {
-			LOG_ERR("Error adding URI_PATH");
-			goto cleanup;
-		}
-	}
-#endif
 
 	ret = coap_append_block2_option(&msg->cpkt, ctx);
 	if (ret < 0) {
@@ -155,19 +170,21 @@ static int transfer_request(struct coap_block_context *ctx, uint8_t *token, uint
 		goto cleanup;
 	}
 
-#if defined(CONFIG_LWM2M_FIRMWARE_UPDATE_PULL_COAP_PROXY_SUPPORT)
-	ret = coap_packet_append_option(&msg->cpkt, COAP_OPTION_PROXY_URI, context.uri,
-					strlen(context.uri));
-	if (ret < 0) {
-		LOG_ERR("Error adding PROXY_URI '%s'", context.uri);
-		goto cleanup;
-	}
-#else
 	/* Ask the server to provide a size estimate */
 	ret = coap_append_option_int(&msg->cpkt, COAP_OPTION_SIZE2, 0);
 	if (ret < 0) {
 		LOG_ERR("Unable to add size2 option.");
 		goto cleanup;
+	}
+
+#if defined(CONFIG_LWM2M_FIRMWARE_UPDATE_PULL_COAP_PROXY_SUPPORT)
+	if (strlen(context.proxy_uri) > 0) {
+		ret = coap_packet_append_option(&msg->cpkt, COAP_OPTION_PROXY_URI, context.uri,
+						strlen(context.uri));
+		if (ret < 0) {
+			LOG_ERR("Error adding PROXY_URI '%s'", context.uri);
+			goto cleanup;
+		}
 	}
 #endif
 
@@ -208,7 +225,7 @@ static int do_firmware_transfer_reply_cb(const struct coap_packet *response,
 		return 0;
 	} else if (coap_header_get_type(response) == COAP_TYPE_CON) {
 		/* Send back ACK so the server knows we received the pkt */
-		ret = lwm2m_send_empty_ack(&context.firmware_ctx,
+		ret = lwm2m_send_empty_ack(context.firmware_ctx_ptr,
 					   coap_header_get_id(check_response));
 		if (ret < 0) {
 			LOG_ERR("Error transmitting ACK");
@@ -350,38 +367,41 @@ static void firmware_transfer(void)
 
 	ret = k_sem_take(&lwm2m_pull_sem, K_NO_WAIT);
 
-#if defined(CONFIG_LWM2M_FIRMWARE_UPDATE_PULL_COAP_PROXY_SUPPORT)
-	server_addr = CONFIG_LWM2M_FIRMWARE_UPDATE_PULL_COAP_PROXY_ADDR;
-	if (strlen(server_addr) >= LWM2M_PACKAGE_URI_LEN) {
-		LOG_ERR("Invalid Proxy URI: %s", server_addr);
-		ret = -ENOTSUP;
-		goto error;
-	}
-
-	/* Copy required as it gets modified when port is available */
-	strcpy(proxy_uri, server_addr);
-	server_addr = proxy_uri;
-#else
 	server_addr = context.uri;
+
+#if defined(CONFIG_LWM2M_FIRMWARE_UPDATE_PULL_COAP_PROXY_SUPPORT)
+	if (strlen(context.proxy_uri) > 0) {
+		server_addr = context.proxy_uri;
+	}
 #endif
 
+#ifdef CONFIG_LWM2M_TRANSPORT_UDP
 	/* Initialize the transport */
 	context.firmware_ctx.transport_name = "udp";
-	lwm2m_engine_context_init(&context.firmware_ctx);
+	lwm2m_engine_context_init(context.firmware_ctx_ptr);
 
 	/* Load the URI */
-	ret = lwm2m_transport_setup(&context.firmware_ctx, server_addr, context.is_firmware_uri);
+	ret = lwm2m_transport_setup(context.firmware_ctx_ptr, server_addr, context.is_firmware_uri);
 	if (ret < 0) {
 		LOG_ERR("Failed to parse server URI.");
 		goto error;
 	}
 
 	/* Start the transport */
-	ret = lwm2m_transport_start(&context.firmware_ctx);
+	ret = lwm2m_transport_start(context.firmware_ctx_ptr);
 	if (ret < 0) {
 		LOG_ERR("Cannot start a firmware-pull connection:%d", ret);
 		goto error;
 	}
+#else
+	/* Re-use an existing context if we're not using UDP */
+	context.firmware_ctx_ptr = lwm2m_engine_get_primary_context();
+	if (context.firmware_ctx_ptr == NULL) {
+		LOG_ERR("No context available");
+		ret = -ENODEV;
+		goto error;
+	}
+#endif
 
 	LOG_INF("Connecting to server %s", context.uri);
 
@@ -409,6 +429,14 @@ int lwm2m_pull_context_start_transfer(char *uri, struct requesting_object req, k
 		return -EINVAL;
 	}
 
+#if defined(CONFIG_LWM2M_FIRMWARE_UPDATE_PULL_COAP_PROXY_SUPPORT)
+	if (req.proxy_uri != NULL &&
+	    strlen(req.proxy_uri) >= CONFIG_LWM2M_SWMGMT_PACKAGE_URI_LEN) {
+		LOG_ERR("Proxy URI too long: %s", req.proxy_uri);
+		return -EINVAL;
+	}
+#endif
+
 	/* Check if we are not in the middle of downloading */
 	ret = k_sem_take(&lwm2m_pull_sem, K_NO_WAIT);
 	if (ret) {
@@ -422,10 +450,21 @@ int lwm2m_pull_context_start_transfer(char *uri, struct requesting_object req, k
 	context.is_firmware_uri = req.is_firmware_uri;
 	context.result_cb = req.result_cb;
 	context.write_cb = req.write_cb;
+#if defined(CONFIG_LWM2M_FIRMWARE_UPDATE_PULL_COAP_PROXY_SUPPORT)
+	memset(context.proxy_uri, 0, sizeof(context.proxy_uri));
+	if (req.proxy_uri != NULL) {
+		strncpy(context.proxy_uri, req.proxy_uri, sizeof(context.proxy_uri) - 1);
+	}
+#endif
 
 	(void)memset(&context.firmware_ctx, 0, sizeof(struct lwm2m_ctx));
 	(void)memset(&context.block_ctx, 0, sizeof(struct coap_block_context));
 	context.firmware_ctx.sock_fd = -1;
+#if defined(CONFIG_LWM2M_DTLS_SUPPORT)
+	context.firmware_ctx.load_credentials = req.load_credentials;
+	context.firmware_ctx.tls_tag = CONFIG_LWM2M_FIRMWARE_UPDATE_PULL_TLS_TAG;
+#endif
+	context.firmware_ctx_ptr = &(context.firmware_ctx);
 
 	n_retry = 0;
 	firmware_transfer();

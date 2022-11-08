@@ -112,6 +112,20 @@ enum lwm2m_observe_event {
 typedef void (*lwm2m_observe_cb_t)(enum lwm2m_observe_event event, struct lwm2m_obj_path *path,
 				   void *user_data);
 
+/**
+ * @brief Application-specific handler for loading TLS credentials
+ *
+ * The default behavior is for the LwM2M context to use the PSK ID and PSK
+ * values from the Server object for TLS credentials. If this needs to be
+ * overridden (e.g., to use a client certificate), this function type will
+ * be used to do the loading.
+ *
+ * @param[in] client_ctx LwM2M context
+ *
+ * @returns 0 on success, <0 on failure
+ */
+typedef int (*load_credentials_cb_t)(struct lwm2m_ctx *client_ctx);
+
 
 enum lwm2m_rd_client_event;
 /**
@@ -168,7 +182,7 @@ struct lwm2m_ctx {
 	/** Client can set load_credentials function as a way of overriding
 	 *  the default behavior of load_tls_credential() in lwm2m_engine.c
 	 */
-	int (*load_credentials)(struct lwm2m_ctx *client_ctx);
+	load_credentials_cb_t load_credentials;
 #endif
 	/** Flag to indicate if context should use DTLS.
 	 *  Enabled via the use of coaps:// protocol prefix in connection
@@ -472,6 +486,41 @@ void lwm2m_firmware_set_update_cb_inst(uint16_t obj_inst_id, lwm2m_engine_execut
  */
 lwm2m_engine_execute_cb_t lwm2m_firmware_get_update_cb_inst(uint16_t obj_inst_id);
 #endif
+
+/**
+ * @brief Set the proxy server URI
+ *
+ * This function sets the proxy server URI to be used for all future firmware pull
+ * requests.
+ *
+ * @param[in] uri Proxy server URI
+ */
+void lwm2m_firmware_set_proxy_uri(char *uri);
+
+/**
+ * @brief Get the proxy server URI
+ *
+ * @returns A pointer to the proxy server URI
+ */
+const char *lwm2m_firmware_get_proxy_uri(void);
+
+/**
+ * @brief Set the function to be used to load TLS credentials for firmware pull requests
+ *
+ * This function sets the callback function used to load TLS credentials
+ * for future fimrware pull requests. The credential callback is responsible
+ * for loading the desired credential into the TLS credential store.
+ *
+ * @param[in] credential_cb Function to call to load credentials
+ */
+void lwm2m_firmware_set_credential_cb(load_credentials_cb_t credential_cb);
+
+/**
+ * @brief Get the function used to load TLS credentials for firmware pull requests
+ *
+ * @returns function pointer for credential loading or NULL if one was not set
+ */
+load_credentials_cb_t lwm2m_firmware_get_credential_cb(void);
 #endif
 
 
@@ -1233,6 +1282,17 @@ int lwm2m_engine_stop(struct lwm2m_ctx *client_ctx);
  * @return 0 for success or negative in case of error.
  */
 int lwm2m_engine_start(struct lwm2m_ctx *client_ctx);
+
+/**
+ * @brief Retrieve the primary LwM2M context
+ *
+ * When LwM2M/CoAP communications are needed for non-networked devices,
+ * this happens over a "primary" LwM2M/CoAP transport. When this context
+ * is needed, this function can be used to retrieve that context.
+ *
+ * @returns the primary LwM2M context or NULL if it does not exist
+ */
+struct lwm2m_ctx *lwm2m_engine_get_primary_context(void);
 
 /**
  * @brief Acknowledge the currently processed request with an empty ACK.

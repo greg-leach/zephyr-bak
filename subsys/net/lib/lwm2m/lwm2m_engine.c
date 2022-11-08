@@ -409,6 +409,11 @@ static int32_t lwm2m_engine_service(const int64_t timestamp)
 	return engine_next_service_timeout_ms(ENGINE_UPDATE_INTERVAL_MS, timestamp);
 }
 
+struct lwm2m_ctx *lwm2m_engine_get_primary_context(void)
+{
+	return sock_ctx[0];
+}
+
 /* LwM2M Socket Integration */
 
 int lwm2m_sock_table_add(struct lwm2m_ctx *ctx)
