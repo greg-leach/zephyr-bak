@@ -955,6 +955,60 @@ int lwm2m_write_handler(struct lwm2m_engine_obj_inst *obj_inst, struct lwm2m_eng
 	return ret;
 }
 
+static int lwm2m_read_handler_opaque_large(struct lwm2m_engine_obj_inst *obj_inst,
+					   struct lwm2m_engine_res *res,
+					   struct lwm2m_engine_res_inst *res_inst,
+					   struct lwm2m_message *msg, void *data_ptr,
+					   size_t data_len)
+{
+	size_t len = 1;
+	size_t offset = 0;
+	size_t bytes_read;
+	bool last_block = true;
+	void *block_buffer = NULL;
+	size_t block_buffer_len = 0;
+
+	/*
+	 * NOTE: data_ptr and data_len are pointing to the LwM2M object tree for the requested
+	 * resource. data_ptr will be NULL and data_len == 0 for large opaque resources that
+	 * require block-wise transfer. Block-wise read operations use a buffer that is provided
+	 * by the resource. Use the pre_write callback to fetch the buffer.
+	 */
+
+	/* Fetch the opaque block buffer from the resource */
+	if (res->pre_write_cb) {
+		block_buffer = res->pre_write_cb(obj_inst->obj_inst_id, res->res_id,
+					     res_inst->res_inst_id, &block_buffer_len);
+	}
+
+	/* Fail if we couldn't get a buffer */
+	if (block_buffer == NULL || block_buffer_len == 0) {
+		return -ENOMEM;
+	}
+
+	data_len = block_buffer_len;
+	if (msg->out.block_ctx && res != NULL) {
+		/*
+		 * Call the read_block_cb from the lwm2m_context to fill the block_buffer with more
+		 * bytes from the resource
+		 */
+		offset = msg->out.block_ctx->opaque.len - msg->out.block_ctx->opaque.remaining;
+		data_len = MIN(coap_block_size_to_bytes(msg->out.block_ctx->ctx.block_size),
+			       msg->out.block_ctx->opaque.remaining);
+		res->read_block_cb(obj_inst->obj_inst_id, res->res_id, res_inst->res_inst_id,
+				   offset, data_len, block_buffer, &bytes_read, &last_block);
+
+		/* Write the additional block-wise data buffer to the packet */
+		len = engine_put_opaque(&msg->out, &msg->path, block_buffer, block_buffer_len,
+					&msg->out.block_ctx->opaque, &last_block);
+
+		/* Update the last_block flag in the context */
+		msg->out.block_ctx->last_block = last_block;
+	}
+
+	return msg->out.block_ctx->opaque.len;
+}
+
 static int lwm2m_read_handler(struct lwm2m_engine_obj_inst *obj_inst, struct lwm2m_engine_res *res,
 			      struct lwm2m_engine_obj_field *obj_field, struct lwm2m_message *msg)
 {
@@ -1035,7 +1089,7 @@ static int lwm2m_read_handler(struct lwm2m_engine_obj_inst *obj_inst, struct lwm
 
 		case LWM2M_RES_TYPE_OPAQUE:
 			ret = engine_put_opaque(&msg->out, &msg->path, (uint8_t *)data_ptr,
-						data_len);
+						data_len, NULL, NULL);
 			break;
 
 		case LWM2M_RES_TYPE_STRING:
@@ -1242,7 +1296,13 @@ static int lwm2m_perform_read_object_instance(struct lwm2m_message *msg,
 				ret = -ENOENT;
 			} else if (!LWM2M_HAS_PERM(obj_field, LWM2M_PERM_R)) {
 				ret = -EPERM;
-			} else {
+			} else if (obj_field->data_type != LWM2M_RES_TYPE_OPAQUE ||
+				   msg->path.level == LWM2M_PATH_LEVEL_RESOURCE) {
+				/*
+				 * Skip opaque resources for object-level reads to avoid
+				 * unexpectedly triggering a read of large opaque values
+				 */
+
 				/* start resource formatting */
 				ret = engine_put_begin_r(&msg->out, &msg->path);
 				if (ret < 0) {
@@ -1299,9 +1359,173 @@ move_forward:
 	return ret;
 }
 
+static int lwm2m_perform_large_read_object(struct lwm2m_message *msg,
+					   struct lwm2m_engine_obj_inst *obj_inst,
+						struct lwm2m_engine_obj_field *obj_field)
+{
+	struct lwm2m_engine_res *res = NULL;
+	struct lwm2m_engine_res_inst *res_inst = NULL;
+	int ret;
+	int index;
+	int i;
+	uint8_t num_read = 0U;
+	size_t total_size;
+	size_t blockwise_transfer_len;
+
+	if (!LWM2M_HAS_PERM(obj_field, LWM2M_PERM_R)) {
+		ret = -EPERM;
+		return ret;
+	} else {
+		for (index = 0; index < obj_inst->resource_count; index++) {
+			if (msg->path.res_id != obj_inst->resources[index].res_id) {
+				continue;
+			}
+			res = &obj_inst->resources[index];
+			break;
+		}
+		if (res == NULL) {
+			ret = -ENOENT;
+			return ret;
+		}
+
+		for (i = 0; i < res->res_inst_count; i++) {
+			if (res->res_instances[i].res_inst_id == msg->path.res_inst_id) {
+				res_inst = &res->res_instances[i];
+				break;
+			}
+		}
+
+		/*
+		 * Check to see if the resource is larger than a single block, otherwise
+		 * let the code fall through to the processing below and the content will
+		 * be provided in a single response packet
+		 */
+		if (res->read_cb != NULL && res->read_block_cb != NULL) {
+			/*
+			 * Get the total size of the resource to determine whether block-wise
+			 * transfer is required
+			 */
+			res->read_cb(obj_inst->obj_inst_id, res->res_id, res_inst->res_inst_id,
+				     &total_size);
+
+			if (total_size > coap_block_size_to_bytes(lwm2m_default_block_size())) {
+				/*
+				 * Note: get_block_ctx() was already called so context should
+				 * already be setup
+				 */
+				if (msg->in.block_ctx != NULL) {
+					msg->out.block_ctx = msg->in.block_ctx;
+				} else {
+					if (msg->tkl) {
+						ret = init_block_ctx(msg->token, msg->tkl,
+								     &msg->out.block_ctx);
+						if (ret != 0) {
+							LOG_ERR("large_read: Could not allocate block context");
+							return ret;
+						}
+					} else {
+						LOG_ERR("no token available attempting to add "
+							"block context");
+						return -ENODATA;
+					}
+				}
+
+				/*
+				 * If this is the first packet, query the content formatter for
+				 * total size
+				 */
+				if (msg->out.block_ctx->ctx.current == 0 &&
+				    msg->out.block_ctx->ctx.total_size == 0) {
+					blockwise_transfer_len = engine_opaque_size(
+						&msg->out, msg->path.res_inst_id, total_size);
+
+					/* Full size of the TLV */
+					msg->out.block_ctx->ctx.total_size = blockwise_transfer_len;
+					/*
+					 * Size of "value" from the TLV only, number of bytes in the
+					 * LwM2M opaque resource
+					 */
+					msg->out.block_ctx->opaque.len = total_size;
+					msg->out.block_ctx->opaque.remaining = total_size;
+					/* Expect to receive request for block 1 next from the
+					 * server */
+					msg->out.block_ctx->expected = 1;
+				}
+
+				/* Append a block2 option to the coap request */
+				ret = coap_append_block2_option(msg->out.out_cpkt,
+								&msg->out.block_ctx->ctx);
+				if (ret < 0) {
+					/* Report as internal server error */
+					LOG_ERR("Fail adding block2 option: %d", ret);
+					ret = -EINVAL;
+					return ret;
+				}
+
+				/*
+				 * If this is the first packet, include the size2 option after
+				 * block2 option
+				 */
+				if (msg->out.block_ctx->ctx.current == 0) {
+					ret = coap_append_size2_option(msg->out.out_cpkt,
+								       &msg->out.block_ctx->ctx);
+					if (ret < 0) {
+						/* Report as internal server error */
+						LOG_ERR("Fail adding size2 option: %d", ret);
+						ret = -EINVAL;
+						return ret;
+					}
+				}
+
+				/* Mark payload start */
+				ret = coap_packet_append_payload_marker(msg->out.out_cpkt);
+				if (ret < 0) {
+					LOG_ERR("Error appending payload marker: %d", ret);
+					return ret;
+				}
+
+				/* Start resource formatting */
+				engine_put_begin_r(&msg->out, &msg->path);
+
+				/* Perform read operation on this resource */
+				ret = lwm2m_read_handler_opaque_large(obj_inst, res, res_inst, msg,
+								      NULL, 0);
+
+				if (ret < 0) {
+					/* Ignore errors if this field is optional */
+					if (!LWM2M_HAS_PERM(obj_field, BIT(LWM2M_FLAG_OPTIONAL))) {
+						LOG_ERR("READ OP: %d", ret);
+						return ret;
+					} else {
+						/* Optional field not found is not an error */
+						return 0;
+					}
+				} else {
+					num_read += 1U;
+				}
+
+				/* End resource formatting */
+				engine_put_end_r(&msg->out, &msg->path);
+			}
+		}
+	}
+
+	/*
+	 * If a resource was successfully read above, skip the read processing below
+	 * and just end the read operation.
+	 */
+	if (num_read) {
+		return ret;
+	}
+
+	/* Try to do regular processing on the message */
+	return -EAGAIN;
+}
+
 int lwm2m_perform_read_op(struct lwm2m_message *msg, uint16_t content_format)
 {
 	struct lwm2m_engine_obj_inst *obj_inst = NULL;
+	struct lwm2m_engine_obj_field *obj_field;
 	struct lwm2m_obj_path temp_path;
 	int ret = 0;
 	uint8_t num_read = 0U;
@@ -1324,6 +1548,21 @@ int lwm2m_perform_read_op(struct lwm2m_message *msg, uint16_t content_format)
 	if (ret < 0) {
 		LOG_ERR("Error setting response content-format: %d", ret);
 		return ret;
+	}
+
+	/*
+	 * Need to check if this is an opaque resource with size larger than
+	 * coap_block_size_to_bytes(lwm2m_default_block_size()). First, use
+	 * lwm2m_get_engine_obj_field() to determine data type for the resource
+	 */
+	if (msg->path.level > LWM2M_PATH_LEVEL_OBJECT_INST) {
+		obj_field = lwm2m_get_engine_obj_field(obj_inst->obj, msg->path.res_id);
+		if (obj_field && obj_field->data_type == LWM2M_RES_TYPE_OPAQUE) {
+			ret = lwm2m_perform_large_read_object (msg, obj_inst, obj_field);
+			if (ret != -EAGAIN) {
+				return ret;
+			}
+		}
 	}
 
 	ret = coap_packet_append_payload_marker(msg->out.out_cpkt);
@@ -1706,6 +1945,11 @@ static int handle_request(struct coap_packet *request, struct lwm2m_message *msg
 	bool last_block = false;
 	bool ignore = false;
 	const uint8_t *payload_start;
+	int block2_opt;
+	int block2_num;
+	struct lwm2m_block_context *block2_ctx = NULL;
+	enum coap_block_size block2_size;
+	bool last_block2 = false;
 
 	/* set CoAP request / message */
 	msg->in.in_cpkt = request;
@@ -1947,6 +2191,67 @@ static int handle_request(struct coap_packet *request, struct lwm2m_message *msg
 		if (!last_block) {
 			msg->code = COAP_RESPONSE_CODE_CONTINUE;
 		}
+	}
+
+	/*
+	 * COAP_OPTION_BLOCK2 handling for read requests from the lwm2m server of
+	 * larger resources
+	 */
+	block2_opt = coap_get_option_int(msg->in.in_cpkt, COAP_OPTION_BLOCK2);
+	if (block2_opt > 0) {
+		last_block2 = !GET_MORE(block2_opt);
+
+		/* RFC7252: 4.6. Message Size */
+		block2_size = GET_BLOCK_SIZE(block2_opt);
+		if (!last_block2 && coap_block_size_to_bytes(block2_size) > payload_len) {
+			LOG_DBG("Trailing payload is discarded!");
+			r = -EFBIG;
+			goto error;
+		}
+
+		block2_num = GET_BLOCK_NUM(block2_opt);
+
+		/* Try to retrieve existing block context. */
+		r = get_block_ctx(token, tkl, &block2_ctx);
+		if (r < 0 && block2_num == 0) {
+			LOG_WRN("Received BLOCK2 request from server with no ctx available");
+			r = init_block_ctx(token, tkl, &block2_ctx);
+		}
+
+		if (r < 0) {
+			LOG_ERR("Cannot find block context");
+			goto error;
+		}
+
+		msg->in.block_ctx = block2_ctx;
+
+		if (block2_num < block2_ctx->expected) {
+			LOG_WRN("Block already handled %d, expected %d", block2_num,
+				block2_ctx->expected);
+			ignore = true;
+		} else if (block2_num > block2_ctx->expected) {
+			LOG_WRN("Block out of order %d, expected %d", block2_num,
+				block2_ctx->expected);
+			r = -EFAULT;
+			goto error;
+		} else {
+			r = coap_update_from_block(msg->in.in_cpkt, &block2_ctx->ctx);
+			if (r < 0) {
+				LOG_ERR("Error from block update: %d", r);
+				goto error;
+			}
+
+			/*
+			 * Initial block sent by the server might be larger than
+			 * our block size therefore it is needed to take this
+			 * into account when calculating next expected block
+			 * number.
+			 */
+			block2_ctx->expected +=
+				GET_BLOCK_SIZE(block2_opt) - block2_ctx->ctx.block_size + 1;
+		}
+
+		msg->code = COAP_RESPONSE_CODE_CONTENT;
 	}
 
 	/* render CoAP packet header */

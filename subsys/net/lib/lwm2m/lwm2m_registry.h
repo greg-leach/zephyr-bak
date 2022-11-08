@@ -45,6 +45,11 @@ void lwm2m_engine_get_queue_mode(char *queue);
 size_t lwm2m_engine_get_opaque_more(struct lwm2m_input_context *in, uint8_t *buf, size_t buflen,
 				    struct lwm2m_opaque_context *opaque, bool *last_block);
 
+size_t lwm2m_engine_put_opaque_more(struct lwm2m_output_context *out,
+				    uint8_t *buf, size_t buflen,
+				    struct lwm2m_opaque_context *opaque,
+				    bool *last_block);
+
 /* Resources */
 sys_slist_t *lwm2m_engine_obj_list(void);
 sys_slist_t *lwm2m_engine_obj_inst_list(void);

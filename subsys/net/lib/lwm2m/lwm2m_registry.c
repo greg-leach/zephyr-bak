@@ -958,6 +958,35 @@ size_t lwm2m_engine_get_opaque_more(struct lwm2m_input_context *in, uint8_t *buf
 	return (size_t)in_len;
 }
 
+size_t lwm2m_engine_put_opaque_more(struct lwm2m_output_context *out, uint8_t *buf, size_t buflen,
+				    struct lwm2m_opaque_context *opaque, bool *last_block)
+{
+	uint32_t out_len = opaque->remaining;
+	uint16_t remaining = out->out_cpkt->max_len - out->offset;
+
+	if (out_len > buflen) {
+		out_len = buflen;
+	}
+
+	if (out_len > remaining) {
+		out_len = remaining;
+	}
+
+	opaque->remaining -= out_len;
+	remaining -= out_len;
+	if (opaque->remaining == 0U || remaining == 0) {
+		*last_block = true;
+	}
+
+	if (buf_append(CPKT_BUF_WRITE(out->out_cpkt), buf, out_len) < 0) {
+		LOG_WRN("buf_append returned < 0");
+		*last_block = true;
+		return 0;
+	}
+
+	return (size_t)out_len;
+}
+
 void lwm2m_engine_get_queue_mode(char *queue)
 {
 	if (IS_ENABLED(CONFIG_LWM2M_QUEUE_MODE_ENABLED)) {
@@ -1121,6 +1150,20 @@ int lwm2m_engine_register_read_callback(const char *pathstr, lwm2m_engine_get_da
 	}
 
 	res->read_cb = cb;
+	return 0;
+}
+
+int lwm2m_engine_register_read_block_callback(char *pathstr, lwm2m_engine_get_data_block_cb_t cb)
+{
+	int ret;
+	struct lwm2m_engine_res *res = NULL;
+
+	ret = lwm2m_engine_get_resource(pathstr, &res);
+	if (ret < 0) {
+		return ret;
+	}
+
+	res->read_block_cb = cb;
 	return 0;
 }
 
