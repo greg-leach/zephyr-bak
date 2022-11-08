@@ -113,6 +113,28 @@ typedef void (*lwm2m_observe_cb_t)(enum lwm2m_observe_event event, struct lwm2m_
 				   void *user_data);
 
 /**
+ * @brief Results of application CoAP message handler
+ */
+enum lwm2m_coap_resp {
+	LWM2M_COAP_RESP_NONE, /* Send no reply */
+	LWM2M_COAP_RESP_ACK, /* Send message in ACK pointer */
+	LWM2M_COAP_RESP_NOT_HANDLED, /* Engine should process message */
+};
+
+/**
+ * @brief Application-specific handler for incoming CoAP request messages
+ *
+ * @param[in] client_ctx LwM2M context
+ * @param[in] request Incoming CoAP request packet
+ * @param[out] ack Pointer to memory for reply packet
+ *
+ * @returns an indication of how the engine should proceed
+ */
+typedef enum lwm2m_coap_resp (*lwm2m_coap_msg_cb_t)(struct lwm2m_ctx *client_ctx,
+						    struct coap_packet *request,
+						    struct coap_packet *ack);
+
+/**
  * @brief Application-specific handler for loading TLS credentials
  *
  * The default behavior is for the LwM2M context to use the PSK ID and PSK
@@ -230,6 +252,9 @@ struct lwm2m_ctx {
 	lwm2m_observe_cb_t observe_cb;
 
 	lwm2m_ctx_event_cb_t event_cb;
+
+	/** Callback for new CoAP messages */
+	lwm2m_coap_msg_cb_t coap_msg_cb;
 
 	/** Validation buffer. Used as a temporary buffer to decode the resource
 	 *  value before validation. On successful validation, its content is
@@ -1293,6 +1318,16 @@ int lwm2m_engine_start(struct lwm2m_ctx *client_ctx);
  * @returns the primary LwM2M context or NULL if it does not exist
  */
 struct lwm2m_ctx *lwm2m_engine_get_primary_context(void);
+
+/**
+ * @brief Send a raw CoAP packet using the LwM2M transport
+ *
+ * @param[in] client_ctx LwM2M context to use
+ * @param[in] pkt Packet to send
+ *
+ * @return 0 for success or negative in case of error.
+ */
+int lwm2m_engine_send_coap(struct lwm2m_ctx *client_ctx, struct coap_packet *pkt);
 
 /**
  * @brief Acknowledge the currently processed request with an empty ACK.

@@ -414,6 +414,12 @@ struct lwm2m_ctx *lwm2m_engine_get_primary_context(void)
 	return sock_ctx[0];
 }
 
+int lwm2m_engine_send_coap(struct lwm2m_ctx *client_ctx, struct coap_packet *pkt)
+{
+	/* Send the message straight to the transport */
+	return lwm2m_transport_send(client_ctx, pkt->data, pkt->offset);
+}
+
 /* LwM2M Socket Integration */
 
 int lwm2m_sock_table_add(struct lwm2m_ctx *ctx)
