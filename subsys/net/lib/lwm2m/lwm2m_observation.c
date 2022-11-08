@@ -20,6 +20,7 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 
 #include "lwm2m_engine.h"
 #include "lwm2m_object.h"
+#include "lwm2m_transport.h"
 #include "lwm2m_util.h"
 
 #include <ctype.h>
@@ -458,7 +459,7 @@ static void engine_observe_node_init(struct observe_node *obs, const uint8_t *to
 	}
 
 	LOG_DBG("token:'%s' addr:%s", sprint_token(token, tkl),
-		lwm2m_sprint_ip_addr(&ctx->remote_addr));
+		lwm2m_transport_print_addr(ctx, &ctx->remote_addr));
 }
 
 static void remove_observer_path_from_list(struct lwm2m_ctx *ctx, struct observe_node *obs,
@@ -603,7 +604,7 @@ static int engine_add_observer(struct lwm2m_message *msg, const uint8_t *token, 
 
 		LOG_DBG("OBSERVER DUPLICATE %u/%u/%u(%u) [%s]", msg->path.obj_id,
 			msg->path.obj_inst_id, msg->path.res_id, msg->path.level,
-			lwm2m_sprint_ip_addr(&msg->ctx->remote_addr));
+			lwm2m_transport_print_addr(msg->ctx, &msg->ctx->remote_addr));
 
 		return 0;
 	}
@@ -685,7 +686,7 @@ static int engine_add_composite_observer(struct lwm2m_message *msg, const uint8_
 		obs->tkl = tkl;
 
 		LOG_DBG("OBSERVER Composite DUPLICATE [%s]",
-			lwm2m_sprint_ip_addr(&msg->ctx->remote_addr));
+			lwm2m_transport_print_addr(msg->ctx, &msg->ctx->remote_addr));
 
 		return do_composite_read_op_for_parsed_list(msg, format, &lwm2m_path_list);
 	}

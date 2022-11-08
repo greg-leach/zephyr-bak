@@ -30,7 +30,6 @@
 /* length of time in milliseconds to wait for buffer allocations */
 #define BUF_ALLOC_TIMEOUT K_SECONDS(1)
 
-char *lwm2m_sprint_ip_addr(const struct sockaddr *addr);
 char *sprint_token(const uint8_t *token, uint8_t tkl);
 /* Validate write access to object. */
 int lwm2m_engine_validate_write_access(struct lwm2m_message *msg,
@@ -79,15 +78,13 @@ uint8_t lwm2m_firmware_get_update_result_inst(uint16_t obj_inst_id);
 uint8_t lwm2m_firmware_get_update_result(void);
 #endif
 
+/* Socket table */
+int lwm2m_sock_table_add(struct lwm2m_ctx *ctx);
+int lwm2m_sock_table_update(struct lwm2m_ctx *ctx);
+void lwm2m_sock_table_del(struct lwm2m_ctx *ctx);
+
 /* Network Layer */
-int lwm2m_socket_add(struct lwm2m_ctx *ctx);
-void lwm2m_socket_del(struct lwm2m_ctx *ctx);
-int lwm2m_socket_close(struct lwm2m_ctx *client_ctx);
-int lwm2m_socket_start(struct lwm2m_ctx *client_ctx);
 int lwm2m_engine_connection_resume(struct lwm2m_ctx *client_ctx);
-int lwm2m_open_socket(struct lwm2m_ctx *client_ctx);
-int lwm2m_close_socket(struct lwm2m_ctx *client_ctx);
-int lwm2m_socket_suspend(struct lwm2m_ctx *client_ctx);
 int lwm2m_push_queued_buffers(struct lwm2m_ctx *client_ctx);
 
 /* Resources */

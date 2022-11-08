@@ -34,8 +34,6 @@
 #define COAP_REPLY_STATUS_ERROR 1
 
 #define NUM_BLOCK1_CONTEXT CONFIG_LWM2M_NUM_BLOCK1_CONTEXT
-/* Establish a request handler callback type */
-typedef int (*udp_request_handler_cb_t)(struct coap_packet *request, struct lwm2m_message *msg);
 /* LwM2M message functions */
 struct lwm2m_message *lwm2m_get_message(struct lwm2m_ctx *client_ctx);
 struct lwm2m_message *find_msg(struct coap_pending *pending, struct coap_reply *reply);
@@ -45,10 +43,8 @@ int lwm2m_init_message(struct lwm2m_message *msg);
 int lwm2m_send_message(struct lwm2m_message *msg);
 int lwm2m_send_message_async(struct lwm2m_message *msg);
 
-int handle_request(struct coap_packet *request, struct lwm2m_message *msg);
-
-void lwm2m_udp_receive(struct lwm2m_ctx *client_ctx, uint8_t *buf, uint16_t buf_len,
-		       struct sockaddr *from_addr, udp_request_handler_cb_t udp_request_handler);
+void lwm2m_coap_receive(struct lwm2m_ctx *client_ctx, uint8_t *buf, uint16_t buf_len,
+		       struct sockaddr *from_addr);
 
 int generate_notify_message(struct lwm2m_ctx *ctx, struct observe_node *obs, void *user_data);
 /* Notification and Send operation */

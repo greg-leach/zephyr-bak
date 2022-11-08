@@ -59,6 +59,7 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 
 #include "lwm2m_object.h"
 #include "lwm2m_engine.h"
+#include "lwm2m_transport.h"
 #include "lwm2m_rd_client.h"
 #include "lwm2m_rw_link_format.h"
 
@@ -186,7 +187,7 @@ static void set_sm_state(uint8_t sm_state)
 		    client.engine_state <= ENGINE_DEREGISTER_SENT)) {
 		event = LWM2M_RD_CLIENT_EVENT_DISCONNECT;
 	} else if (sm_state == ENGINE_NETWORK_ERROR) {
-		lwm2m_socket_close(client.ctx);
+		lwm2m_transport_close(client.ctx);
 		client.retry_delay = 1 << client.retries;
 		client.retries++;
 		if (client.retries > CONFIG_LWM2M_RD_CLIENT_MAX_RETRIES) {
@@ -205,9 +206,9 @@ static void set_sm_state(uint8_t sm_state)
 	/* Suspend socket after Event callback */
 	if (event == LWM2M_RD_CLIENT_EVENT_QUEUE_MODE_RX_OFF) {
 		if (IS_ENABLED(CONFIG_LWM2M_RD_CLIENT_SUSPEND_SOCKET_AT_IDLE)) {
-			lwm2m_socket_suspend(client.ctx);
+			lwm2m_transport_suspend(client.ctx, false);
 		} else {
-			lwm2m_close_socket(client.ctx);
+			lwm2m_transport_suspend(client.ctx, true);
 		}
 	}
 }
@@ -290,7 +291,7 @@ static void sm_handle_failure_state(enum sm_engine_state sm_state)
 }
 
 /* force state machine restart */
-static void socket_fault_cb(int error)
+static void socket_fault_cb(struct lwm2m_ctx *client_ctx, int error)
 {
 	LOG_ERR("RD Client socket error: %d", error);
 
@@ -300,7 +301,7 @@ static void socket_fault_cb(int error)
 		client.last_update = 0;
 	}
 
-	lwm2m_socket_close(client.ctx);
+	lwm2m_transport_close(client.ctx);
 
 	set_sm_state(ENGINE_NETWORK_ERROR);
 }
@@ -912,7 +913,7 @@ static int sm_send_registration(bool send_obj_support_data,
 
 	/* log the registration attempt */
 	LOG_DBG("registration sent [%s]",
-		lwm2m_sprint_ip_addr(&client.ctx->remote_addr));
+		lwm2m_transport_print_addr(client.ctx, &client.ctx->remote_addr));
 
 	return 0;
 
@@ -1141,7 +1142,7 @@ static void sm_do_network_error(void)
 		return;
 	}
 
-	err = lwm2m_socket_start(client.ctx);
+	err = lwm2m_transport_start(client.ctx);
 	if (err) {
 		LOG_ERR("Failed to start socket %d", err);
 		/*
@@ -1268,6 +1269,10 @@ int lwm2m_rd_client_start(struct lwm2m_ctx *client_ctx, const char *ep_name,
 
 	/* Init Context */
 	lwm2m_engine_context_init(client_ctx);
+	if (lwm2m_transport_lookup(client_ctx) < 0) {
+		LOG_ERR("Client invalid transport \"%s\"", client_ctx->transport_name);
+		return -EINVAL;
+	}
 
 	client.ctx = client_ctx;
 	client.ctx->sock_fd = -1;
@@ -1362,7 +1367,7 @@ int lwm2m_rd_client_resume(void)
 	}
 
 	LOG_INF("Resume Client state");
-	lwm2m_close_socket(client.ctx);
+	lwm2m_transport_suspend(client.ctx, true);
 	client.engine_state = suspended_client_state;
 
 	if ((client.lifetime <= (k_uptime_get() - client.last_update) / 1000)) {
@@ -1372,7 +1377,7 @@ int lwm2m_rd_client_resume(void)
 		client.trigger_update = true;
 	}
 
-	ret = lwm2m_open_socket(client.ctx);
+	ret = lwm2m_transport_open(client.ctx);
 	if (ret) {
 		LOG_ERR("Socket Open Fail");
 		client.engine_state = ENGINE_INIT;

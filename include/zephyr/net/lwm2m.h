@@ -73,7 +73,10 @@
 #define IPSO_OBJECT_FILLING_LEVEL_SENSOR_ID 3435
 /* clang-format on */
 
-typedef void (*lwm2m_socket_fault_cb_t)(int error);
+/* Forward definition */
+struct lwm2m_ctx;
+
+typedef void (*lwm2m_socket_fault_cb_t)(struct lwm2m_ctx *ctx, int error);
 
 struct lwm2m_obj_path {
 	uint16_t obj_id;
@@ -107,7 +110,6 @@ typedef void (*lwm2m_observe_cb_t)(enum lwm2m_observe_event event, struct lwm2m_
 				   void *user_data);
 
 
-struct lwm2m_ctx;
 enum lwm2m_rd_client_event;
 /**
  * @brief Asynchronous RD client event callback
@@ -124,6 +126,10 @@ typedef void (*lwm2m_ctx_event_cb_t)(struct lwm2m_ctx *ctx,
  * LwM2M connection.
  */
 struct lwm2m_ctx {
+	/** Transport name */
+	const char *transport_name;
+	int transport_idx;
+
 	/** Destination address storage */
 	struct sockaddr remote_addr;
 

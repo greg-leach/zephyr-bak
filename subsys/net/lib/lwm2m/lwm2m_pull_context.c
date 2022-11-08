@@ -20,6 +20,7 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 
 #include "lwm2m_pull_context.h"
 #include "lwm2m_engine.h"
+#include "lwm2m_transport.h"
 
 static K_SEM_DEFINE(lwm2m_pull_sem, 1, 1);
 
@@ -364,14 +365,19 @@ static void firmware_transfer(void)
 	server_addr = context.uri;
 #endif
 
-	ret = lwm2m_parse_peerinfo(server_addr, &context.firmware_ctx, context.is_firmware_uri);
+	/* Initialize the transport */
+	context.firmware_ctx.transport_name = "udp";
+	lwm2m_engine_context_init(&context.firmware_ctx);
+
+	/* Load the URI */
+	ret = lwm2m_transport_setup(&context.firmware_ctx, server_addr, context.is_firmware_uri);
 	if (ret < 0) {
 		LOG_ERR("Failed to parse server URI.");
 		goto error;
 	}
 
-	lwm2m_engine_context_init(&context.firmware_ctx);
-	ret = lwm2m_socket_start(&context.firmware_ctx);
+	/* Start the transport */
+	ret = lwm2m_transport_start(&context.firmware_ctx);
 	if (ret < 0) {
 		LOG_ERR("Cannot start a firmware-pull connection:%d", ret);
 		goto error;

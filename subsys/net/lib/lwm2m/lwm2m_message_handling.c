@@ -26,20 +26,9 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 #include <string.h>
 
 #include <zephyr/init.h>
-#include <zephyr/net/http_parser_url.h>
 #include <zephyr/net/lwm2m.h>
-#include <zephyr/net/net_ip.h>
-#include <zephyr/net/socket.h>
-#include <zephyr/sys/printk.h>
 #include <zephyr/types.h>
-
 #include <fcntl.h>
-#if defined(CONFIG_LWM2M_DTLS_SUPPORT)
-#include <zephyr/net/tls_credentials.h>
-#endif
-#if defined(CONFIG_DNS_RESOLVER)
-#include <zephyr/net/dns_resolve.h>
-#endif
 
 #include "lwm2m_engine.h"
 #include "lwm2m_object.h"
@@ -47,6 +36,7 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 #include "lwm2m_rw_link_format.h"
 #include "lwm2m_rw_oma_tlv.h"
 #include "lwm2m_rw_plain_text.h"
+#include "lwm2m_transport.h"
 #include "lwm2m_util.h"
 #if defined(CONFIG_LWM2M_RW_SENML_JSON_SUPPORT)
 #include "lwm2m_rw_senml_json.h"
@@ -447,10 +437,10 @@ int lwm2m_send_message(struct lwm2m_message *msg)
 		coap_pending_cycle(msg->pending);
 	}
 
-	rc = send(msg->ctx->sock_fd, msg->cpkt.data, msg->cpkt.offset, 0);
+	rc = lwm2m_transport_send(msg->ctx, msg->cpkt.data, msg->cpkt.offset);
 
 	if (rc < 0) {
-		LOG_ERR("Failed to send packet, err %d", errno);
+		LOG_ERR("Failed to send packet, err %d", rc);
 		if (msg->type != COAP_TYPE_CON) {
 			lwm2m_reset_message(msg, true);
 		}
@@ -1699,7 +1689,7 @@ static int lwm2m_exec_handler(struct lwm2m_message *msg)
 	return -ENOENT;
 }
 
-int handle_request(struct coap_packet *request, struct lwm2m_message *msg)
+static int handle_request(struct coap_packet *request, struct lwm2m_message *msg)
 {
 	int r;
 	uint8_t code;
@@ -2156,8 +2146,8 @@ static int lwm2m_response_promote_to_con(struct lwm2m_message *msg)
 	return ret;
 }
 
-void lwm2m_udp_receive(struct lwm2m_ctx *client_ctx, uint8_t *buf, uint16_t buf_len,
-		       struct sockaddr *from_addr, udp_request_handler_cb_t udp_request_handler)
+void lwm2m_coap_receive(struct lwm2m_ctx *client_ctx, uint8_t *buf, uint16_t buf_len,
+		       struct sockaddr *from_addr)
 {
 	struct lwm2m_message *msg = NULL;
 	struct coap_pending *pending;
@@ -2201,7 +2191,7 @@ void lwm2m_udp_receive(struct lwm2m_ctx *client_ctx, uint8_t *buf, uint16_t buf_
 		}
 	}
 
-	LOG_DBG("checking for reply from [%s]", lwm2m_sprint_ip_addr(from_addr));
+	LOG_DBG("checking for reply from [%s]", lwm2m_transport_print_addr(client_ctx, from_addr));
 	reply = coap_response_received(&response, from_addr, client_ctx->replies,
 				       ARRAY_SIZE(client_ctx->replies));
 	if (reply) {
@@ -2236,7 +2226,7 @@ void lwm2m_udp_receive(struct lwm2m_ctx *client_ctx, uint8_t *buf, uint16_t buf_
 	 * a new request coming from the server.  Let's look
 	 * at registered objects to find a handler.
 	 */
-	if (udp_request_handler && coap_header_get_type(&response) == COAP_TYPE_CON) {
+	if (coap_header_get_type(&response) == COAP_TYPE_CON) {
 		msg = lwm2m_get_message(client_ctx);
 		if (!msg) {
 			LOG_ERR("Unable to get a lwm2m message!");
@@ -2253,7 +2243,7 @@ void lwm2m_udp_receive(struct lwm2m_ctx *client_ctx, uint8_t *buf, uint16_t buf_
 		client_ctx->processed_req = msg;
 
 		/* process the response to this request */
-		r = udp_request_handler(&response, msg);
+		r = handle_request(&response, msg);
 		if (r < 0) {
 			return;
 		}
@@ -2395,7 +2385,8 @@ int generate_notify_message(struct lwm2m_ctx *ctx, struct observe_node *obs, voi
 		LOG_DBG("[%s] NOTIFY MSG START: %u/%u/%u(%u) token:'%s' [%s] %lld",
 			obs->resource_update ? "MANUAL" : "AUTO", path->obj_id, path->obj_inst_id,
 			path->res_id, path->level, sprint_token(obs->token, obs->tkl),
-			lwm2m_sprint_ip_addr(&ctx->remote_addr), (long long)k_uptime_get());
+			lwm2m_transport_print_addr(ctx, &ctx->remote_addr),
+			(long long)k_uptime_get());
 
 		obj_inst = get_engine_obj_inst(path->obj_id, path->obj_inst_id);
 		if (!obj_inst) {
@@ -2407,7 +2398,8 @@ int generate_notify_message(struct lwm2m_ctx *ctx, struct observe_node *obs, voi
 	} else {
 		LOG_DBG("[%s] NOTIFY MSG START: (Composite)) token:'%s' [%s] %lld",
 			obs->resource_update ? "MANUAL" : "AUTO",
-			sprint_token(obs->token, obs->tkl), lwm2m_sprint_ip_addr(&ctx->remote_addr),
+			sprint_token(obs->token, obs->tkl),
+			lwm2m_transport_print_addr(ctx, &ctx->remote_addr),
 			(long long)k_uptime_get());
 	}
 
@@ -2558,126 +2550,6 @@ int lwm2m_perform_composite_read_op(struct lwm2m_message *msg, uint16_t content_
 	}
 
 	return 0;
-}
-
-int lwm2m_parse_peerinfo(char *url, struct lwm2m_ctx *client_ctx, bool is_firmware_uri)
-{
-	struct http_parser_url parser;
-#if defined(CONFIG_LWM2M_DNS_SUPPORT)
-	struct addrinfo *res, hints = {0};
-#endif
-	int ret;
-	uint16_t off, len;
-	uint8_t tmp;
-
-	LOG_DBG("Parse url: %s", url);
-
-	http_parser_url_init(&parser);
-	ret = http_parser_parse_url(url, strlen(url), 0, &parser);
-	if (ret < 0) {
-		LOG_ERR("Invalid url: %s", url);
-		return -ENOTSUP;
-	}
-
-	off = parser.field_data[UF_SCHEMA].off;
-	len = parser.field_data[UF_SCHEMA].len;
-
-	/* check for supported protocol */
-	if (strncmp(url + off, "coaps", len) != 0) {
-		return -EPROTONOSUPPORT;
-	}
-
-	/* check for DTLS requirement */
-	client_ctx->use_dtls = false;
-	if (len == 5U && strncmp(url + off, "coaps", len) == 0) {
-#if defined(CONFIG_LWM2M_DTLS_SUPPORT)
-		client_ctx->use_dtls = true;
-#else
-		return -EPROTONOSUPPORT;
-#endif /* CONFIG_LWM2M_DTLS_SUPPORT */
-	}
-
-	if (!(parser.field_set & (1 << UF_PORT))) {
-		if (is_firmware_uri && client_ctx->use_dtls) {
-			/* Set to default coaps firmware update port */
-			parser.port = CONFIG_LWM2M_FIRMWARE_PORT_SECURE;
-		} else if (is_firmware_uri) {
-			/* Set to default coap firmware update port */
-			parser.port = CONFIG_LWM2M_FIRMWARE_PORT_NONSECURE;
-		} else {
-			/* Set to default LwM2M server port */
-			parser.port = CONFIG_LWM2M_PEER_PORT;
-		}
-	}
-
-	off = parser.field_data[UF_HOST].off;
-	len = parser.field_data[UF_HOST].len;
-
-#if defined(CONFIG_LWM2M_DTLS_SUPPORT)
-	/** copy url pointer to be used in socket */
-	client_ctx->desthostname = url + off;
-	client_ctx->desthostnamelen = len;
-#endif
-
-	/* truncate host portion */
-	tmp = url[off + len];
-	url[off + len] = '\0';
-
-	/* initialize remote_addr */
-	(void)memset(&client_ctx->remote_addr, 0, sizeof(client_ctx->remote_addr));
-
-	/* try and set IP address directly */
-	client_ctx->remote_addr.sa_family = AF_INET6;
-	ret = net_addr_pton(AF_INET6, url + off,
-			    &((struct sockaddr_in6 *)&client_ctx->remote_addr)->sin6_addr);
-	/* Try to parse again using AF_INET */
-	if (ret < 0) {
-		client_ctx->remote_addr.sa_family = AF_INET;
-		ret = net_addr_pton(AF_INET, url + off,
-				    &((struct sockaddr_in *)&client_ctx->remote_addr)->sin_addr);
-	}
-
-	if (ret < 0) {
-#if defined(CONFIG_LWM2M_DNS_SUPPORT)
-#if defined(CONFIG_NET_IPV6) && defined(CONFIG_NET_IPV4)
-		hints.ai_family = AF_UNSPEC;
-#elif defined(CONFIG_NET_IPV6)
-		hints.ai_family = AF_INET6;
-#elif defined(CONFIG_NET_IPV4)
-		hints.ai_family = AF_INET;
-#else
-		hints.ai_family = AF_UNSPEC;
-#endif /* defined(CONFIG_NET_IPV6) && defined(CONFIG_NET_IPV4) */
-		hints.ai_socktype = SOCK_DGRAM;
-		ret = getaddrinfo(url + off, NULL, &hints, &res);
-		if (ret != 0) {
-			LOG_ERR("Unable to resolve address");
-			/* DNS error codes don't align with normal errors */
-			ret = -ENOENT;
-			goto cleanup;
-		}
-
-		memcpy(&client_ctx->remote_addr, res->ai_addr, sizeof(client_ctx->remote_addr));
-		client_ctx->remote_addr.sa_family = res->ai_family;
-		freeaddrinfo(res);
-#else
-		goto cleanup;
-#endif /* CONFIG_LWM2M_DNS_SUPPORT */
-	}
-
-	/* set port */
-	if (client_ctx->remote_addr.sa_family == AF_INET6) {
-		net_sin6(&client_ctx->remote_addr)->sin6_port = htons(parser.port);
-	} else if (client_ctx->remote_addr.sa_family == AF_INET) {
-		net_sin(&client_ctx->remote_addr)->sin_port = htons(parser.port);
-	} else {
-		ret = -EPROTONOSUPPORT;
-	}
-
-cleanup:
-	/* restore host separator */
-	url[off + len] = tmp;
-	return ret;
 }
 
 int do_composite_read_op_for_parsed_list(struct lwm2m_message *msg, uint16_t content_format,

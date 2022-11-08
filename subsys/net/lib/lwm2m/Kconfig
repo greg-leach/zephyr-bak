@@ -4,7 +4,6 @@
 menuconfig LWM2M
 	bool "OMA LWM2M protocol stack"
 	select COAP
-	select HTTP_PARSER_URL
 	select NET_SOCKETS
 	select NET_SOCKETS_POSIX_NAMES
 	help
@@ -41,8 +40,34 @@ config LWM2M_SHELL
 	  Activate shell module that provides LwM2M commands like
 	  send to the console.
 
+config LWM2M_TRANSPORT_NUM
+	int "Number of LwM2M transports that can be registered"
+	default 1
+	help
+	  Set the number of transports that can be registered with the LwM2M engine
+
+config LWM2M_TRANSPORT_UDP
+	bool "Enable CoAP over UDP transport for LwM2M"
+	depends on (HTTP_PARSER || HTTP_PARSER_URL)
+	help
+	  This option adds support for transporting LwM2M/CoAP over UDP
+
 config LWM2M_DTLS_SUPPORT
 	bool "DTLS support in the LwM2M client"
+	depends on LWM2M_TRANSPORT_UDP
+
+if LWM2M_DTLS_SUPPORT
+
+config LWM2M_TLS_MAX_CIPHERSUITES
+	int "Maximum number of TLS ciphersuites"
+	help
+	  This must be set larger than the number of configured TLS ciphersuites in mbedtls
+
+config LWM2M_DTLS_VERIFY
+	bool "Verify server credentials on DTLS connection"
+	default true
+
+endif
 
 choice
 	prompt "LwM2M Security object version"
