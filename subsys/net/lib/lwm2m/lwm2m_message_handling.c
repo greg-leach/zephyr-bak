@@ -223,7 +223,8 @@ static int coap_options_to_path(struct coap_option *opt, int options_count,
 	return options_count == path->level ? 0 : -EINVAL;
 }
 
-struct lwm2m_message *find_msg(struct coap_pending *pending, struct coap_reply *reply)
+struct lwm2m_message *find_msg(struct lwm2m_ctx *client_ctx, struct coap_pending *pending,
+			       struct coap_reply *reply)
 {
 	size_t i;
 	struct lwm2m_message *msg;
@@ -232,15 +233,9 @@ struct lwm2m_message *find_msg(struct coap_pending *pending, struct coap_reply *
 		return NULL;
 	}
 
-	msg = lwm2m_get_ongoing_rd_msg();
+	msg = lwm2m_get_ongoing_rd_msg(client_ctx, pending, reply);
 	if (msg) {
-		if (pending != NULL && msg->pending == pending) {
-			return msg;
-		}
-
-		if (reply != NULL && msg->reply == reply) {
-			return msg;
-		}
+		return msg;
 	}
 
 	for (i = 0; i < CONFIG_LWM2M_ENGINE_MAX_MESSAGES; i++) {
@@ -394,7 +389,7 @@ int lwm2m_send_message_async(struct lwm2m_message *msg)
 
 	if (IS_ENABLED(CONFIG_LWM2M_RD_CLIENT_SUPPORT) &&
 	    IS_ENABLED(CONFIG_LWM2M_QUEUE_MODE_ENABLED)) {
-		engine_update_tx_time();
+		engine_update_tx_time(msg->ctx);
 	}
 	return 0;
 }
@@ -419,7 +414,7 @@ int lwm2m_information_interface_send(struct lwm2m_message *msg)
 
 	if (IS_ENABLED(CONFIG_LWM2M_RD_CLIENT_SUPPORT) &&
 	    IS_ENABLED(CONFIG_LWM2M_QUEUE_MODE_ENABLED)) {
-		engine_update_tx_time();
+		engine_update_tx_time(msg->ctx);
 	}
 	return 0;
 }
@@ -431,6 +426,11 @@ int lwm2m_send_message(struct lwm2m_message *msg)
 	if (!msg || !msg->ctx) {
 		LOG_ERR("LwM2M message is invalid.");
 		return -EINVAL;
+	}
+
+	/* Update t0 to reflect when we sent the message, not when it was built */
+	if (msg->pending != NULL) {
+		msg->pending->t0 = k_uptime_get_32();
 	}
 
 	if (msg->type == COAP_TYPE_CON) {
@@ -454,6 +454,7 @@ int lwm2m_send_message(struct lwm2m_message *msg)
 
 	return 0;
 }
+
 int lwm2m_send_empty_ack(struct lwm2m_ctx *client_ctx, uint16_t mid)
 {
 	struct lwm2m_message *msg;
@@ -1750,7 +1751,7 @@ static int handle_request(struct coap_packet *request, struct lwm2m_message *msg
 	/* check for bootstrap-finish */
 	if ((code & COAP_REQUEST_MASK) == COAP_METHOD_POST && r == 1 &&
 	    strncmp(options[0].value, "bs", options[0].len) == 0) {
-		engine_bootstrap_finish();
+		engine_bootstrap_finish(msg->ctx);
 
 		msg->code = COAP_RESPONSE_CODE_CHANGED;
 
@@ -2166,7 +2167,7 @@ void lwm2m_coap_receive(struct lwm2m_ctx *client_ctx, uint8_t *buf, uint16_t buf
 	pending = coap_pending_received(&response, client_ctx->pendings,
 					ARRAY_SIZE(client_ctx->pendings));
 	if (pending && coap_header_get_type(&response) == COAP_TYPE_ACK) {
-		msg = find_msg(pending, NULL);
+		msg = find_msg(client_ctx, pending, NULL);
 		if (msg == NULL) {
 			LOG_DBG("Orphaned pending %p.", pending);
 			coap_pending_clear(pending);
@@ -2195,7 +2196,7 @@ void lwm2m_coap_receive(struct lwm2m_ctx *client_ctx, uint8_t *buf, uint16_t buf
 	reply = coap_response_received(&response, from_addr, client_ctx->replies,
 				       ARRAY_SIZE(client_ctx->replies));
 	if (reply) {
-		msg = find_msg(NULL, reply);
+		msg = find_msg(client_ctx, NULL, reply);
 
 		if (coap_header_get_type(&response) == COAP_TYPE_CON) {
 			r = lwm2m_send_empty_ack(client_ctx, coap_header_get_id(&response));
@@ -2312,7 +2313,7 @@ static int notify_message_reply_cb(const struct coap_packet *response, struct co
 		COAP_RESPONSE_CODE_CLASS(code), COAP_RESPONSE_CODE_DETAIL(code),
 		sprint_token(reply->token, reply->tkl));
 
-	msg = find_msg(NULL, reply);
+	msg = find_msg(NULL, NULL, reply);
 
 	/* remove observer on COAP_TYPE_RESET */
 	if (type == COAP_TYPE_RESET) {
@@ -2616,7 +2617,7 @@ int lwm2m_engine_send(struct lwm2m_ctx *ctx, char const *path_list[], uint8_t pa
 	sys_slist_t lwm2m_path_free_list;
 
 	/* Validate Connection */
-	if (!lwm2m_rd_client_is_registred(ctx)) {
+	if (!lwm2m_rd_client_is_registered(ctx)) {
 		return -EPERM;
 	}
 

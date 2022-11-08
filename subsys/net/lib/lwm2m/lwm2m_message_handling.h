@@ -36,7 +36,8 @@
 #define NUM_BLOCK1_CONTEXT CONFIG_LWM2M_NUM_BLOCK1_CONTEXT
 /* LwM2M message functions */
 struct lwm2m_message *lwm2m_get_message(struct lwm2m_ctx *client_ctx);
-struct lwm2m_message *find_msg(struct coap_pending *pending, struct coap_reply *reply);
+struct lwm2m_message *find_msg(struct lwm2m_ctx *client_ctx, struct coap_pending *pending,
+			       struct coap_reply *reply);
 void lwm2m_reset_message(struct lwm2m_message *msg, bool release);
 void lm2m_message_clear_allocations(struct lwm2m_message *msg);
 int lwm2m_init_message(struct lwm2m_message *msg);

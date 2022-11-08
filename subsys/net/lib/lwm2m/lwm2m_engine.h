@@ -53,8 +53,6 @@ int lwm2m_perform_composite_observation_op(struct lwm2m_message *msg, uint8_t *t
 bool lwm2m_engine_bootstrap_override(struct lwm2m_ctx *client_ctx, struct lwm2m_obj_path *path);
 int bootstrap_delete(struct lwm2m_message *msg);
 
-int lwm2m_engine_add_service(k_work_handler_t service, uint32_t period_ms);
-
 int lwm2m_security_inst_id_to_index(uint16_t obj_inst_id);
 int lwm2m_security_index_to_inst_id(int index);
 

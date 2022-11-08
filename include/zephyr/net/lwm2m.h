@@ -78,6 +78,9 @@ struct lwm2m_ctx;
 
 typedef void (*lwm2m_socket_fault_cb_t)(struct lwm2m_ctx *ctx, int error);
 
+/* Signature for a LwM2M service work handler function, identified by a tag */
+typedef void (*service_handler_t)(uint32_t tag);
+
 struct lwm2m_obj_path {
 	uint16_t obj_id;
 	uint16_t obj_inst_id;
@@ -1152,6 +1155,20 @@ int lwm2m_engine_create_res_inst(const char *pathstr);
 int lwm2m_engine_delete_res_inst(const char *pathstr);
 
 /**
+ * @brief Add a service
+ *
+ * Creates a service that will be called at a periodic interval
+ * specified by the period_ms parameter.
+ *
+ * @param[in] service Function pointer to be invoked periodically
+ * @param[in] period_ms Interval to call the service
+ * @param[in] tag User-provided value to be passed back to the service
+ *
+ * @return 0 for success or negative in case of error.
+ */
+int lwm2m_engine_add_service(service_handler_t service, uint32_t period_ms, uint32_t tag);
+
+/**
  * @brief Update the period of a given service.
  *
  * Allow the period modification on an existing service created with
@@ -1164,7 +1181,7 @@ int lwm2m_engine_delete_res_inst(const char *pathstr);
  *
  * @return 0 for success or negative in case of error.
  */
-int lwm2m_engine_update_service_period(k_work_handler_t service, uint32_t period_ms);
+int lwm2m_engine_update_service_period(service_handler_t service, uint32_t period_ms);
 
 /**
  * @brief Update the period of the device service.
@@ -1271,6 +1288,9 @@ enum lwm2m_rd_client_event {
  *
  * NOTE: lwm2m_engine_start() is called automatically by this function.
  *
+ * @param[in] rd_client_index rd client instance index to use
+ * @param[in] init_sec_obj_inst security object instance to reset to on ENGINE_INIT
+ * @param[in] init_srv_obj_inst server object instance to reset to on ENGINE_INIT
  * @param[in] client_ctx LwM2M context
  * @param[in] ep_name Registered endpoint name
  * @param[in] flags Flags used to configure current LwM2M session.
@@ -1282,7 +1302,9 @@ enum lwm2m_rd_client_event {
  * @return 0 for success, -EINPROGRESS when client is already running
  *         or negative error codes in case of failure.
  */
-int lwm2m_rd_client_start(struct lwm2m_ctx *client_ctx, const char *ep_name,
+int lwm2m_rd_client_start(
+			   uint8_t rd_client_index, int init_sec_obj_inst, int init_srv_obj_inst,
+			   struct lwm2m_ctx *client_ctx, const char *ep_name,
 			   uint32_t flags, lwm2m_ctx_event_cb_t event_cb,
 			   lwm2m_observe_cb_t observe_cb);
 
