@@ -138,7 +138,7 @@ static int sm_send_registration_msg(struct lwm2m_rd_client_info *client);
  */
 static char query_buffer[MAX(32, sizeof("ep=") + CLIENT_EP_LEN)];
 
-static struct lwm2m_rd_client_info *lwm2m_get_client_from_ctx(struct lwm2m_ctx *ctx, int z)
+static struct lwm2m_rd_client_info *lwm2m_get_client_from_ctx(struct lwm2m_ctx *ctx)
 {
 	int i;
 
@@ -148,7 +148,7 @@ static struct lwm2m_rd_client_info *lwm2m_get_client_from_ctx(struct lwm2m_ctx *
 		}
 	}
 
-	LOG_ERR("lwm2m_get_client_from_ctx: Couldn't find index for %p, %d", ctx, z);
+	LOG_ERR("lwm2m_get_client_from_ctx: Couldn't find index for %p", ctx);
 	return &clients[0];
 }
 
@@ -198,7 +198,7 @@ static struct lwm2m_message *rd_get_message(struct lwm2m_rd_client_info *client)
 struct lwm2m_message *lwm2m_get_ongoing_rd_msg(struct lwm2m_ctx *ctx, struct coap_pending *pending,
 					       struct coap_reply *reply)
 {
-	struct lwm2m_rd_client_info *client = lwm2m_get_client_from_ctx(ctx, 1);
+	struct lwm2m_rd_client_info *client;
 	int i;
 
 	/* Search all contexts for a matching message */
@@ -223,14 +223,14 @@ struct lwm2m_message *lwm2m_get_ongoing_rd_msg(struct lwm2m_ctx *ctx, struct coa
 
 void engine_update_tx_time(struct lwm2m_ctx *ctx)
 {
-	struct lwm2m_rd_client_info *client = lwm2m_get_client_from_ctx(ctx, 2);
+	struct lwm2m_rd_client_info *client = lwm2m_get_client_from_ctx(ctx);
 	client->last_tx = k_uptime_get();
 }
 
 static void set_sm_state(struct lwm2m_ctx *ctx, uint8_t sm_state)
 {
 	enum lwm2m_rd_client_event event = LWM2M_RD_CLIENT_EVENT_NONE;
-	struct lwm2m_rd_client_info *client = lwm2m_get_client_from_ctx(ctx, 3);
+	struct lwm2m_rd_client_info *client = lwm2m_get_client_from_ctx(ctx);
 
 	/* Determine if a callback to the app is needed */
 #if defined(CONFIG_LWM2M_RD_CLIENT_SUPPORT_BOOTSTRAP)
@@ -309,7 +309,7 @@ static void sm_handle_timeout_state(struct lwm2m_message *msg,
 				    enum sm_engine_state sm_state)
 {
 	enum lwm2m_rd_client_event event = LWM2M_RD_CLIENT_EVENT_NONE;
-	struct lwm2m_rd_client_info *client = lwm2m_get_client_from_ctx(msg->ctx, 4);
+	struct lwm2m_rd_client_info *client = lwm2m_get_client_from_ctx(msg->ctx);
 
 #if defined(CONFIG_LWM2M_RD_CLIENT_SUPPORT_BOOTSTRAP)
 	if (client->engine_state == ENGINE_BOOTSTRAP_REG_SENT) {
@@ -338,7 +338,7 @@ static void sm_handle_timeout_state(struct lwm2m_message *msg,
 static void sm_handle_failure_state(struct lwm2m_ctx *ctx, enum sm_engine_state sm_state)
 {
 	enum lwm2m_rd_client_event event = LWM2M_RD_CLIENT_EVENT_NONE;
-	struct lwm2m_rd_client_info *client = lwm2m_get_client_from_ctx(ctx, 5);
+	struct lwm2m_rd_client_info *client = lwm2m_get_client_from_ctx(ctx);
 
 #if defined(CONFIG_LWM2M_RD_CLIENT_SUPPORT_BOOTSTRAP)
 	if (client->engine_state == ENGINE_BOOTSTRAP_REG_SENT) {
@@ -365,7 +365,7 @@ static void sm_handle_failure_state(struct lwm2m_ctx *ctx, enum sm_engine_state 
 /* force state machine restart */
 static void socket_fault_cb(struct lwm2m_ctx *ctx, int error)
 {
-	struct lwm2m_rd_client_info *client = lwm2m_get_client_from_ctx(ctx, 6);
+	struct lwm2m_rd_client_info *client = lwm2m_get_client_from_ctx(ctx);
 
 	LOG_ERR("RD Client %d socket error: %d", client->index, error);
 
@@ -540,7 +540,7 @@ static int do_registration_reply_cb(const struct coap_packet *response,
 
 static void do_registration_timeout_cb(struct lwm2m_message *msg)
 {
-	struct lwm2m_rd_client_info *client = lwm2m_get_client_from_ctx(msg->ctx, 7);
+	struct lwm2m_rd_client_info *client = lwm2m_get_client_from_ctx(msg->ctx);
 
 	LOG_WRN("RD Client %d Registration Timeout", client->index);
 
@@ -582,7 +582,7 @@ static int do_update_reply_cb(const struct coap_packet *response,
 
 static void do_update_timeout_cb(struct lwm2m_message *msg)
 {
-	struct lwm2m_rd_client_info *client = lwm2m_get_client_from_ctx(msg->ctx, 8);
+	struct lwm2m_rd_client_info *client = lwm2m_get_client_from_ctx(msg->ctx);
 
 	LOG_WRN("RD Client %d Registration Update Timeout", client->index);
 
@@ -1415,7 +1415,7 @@ int lwm2m_rd_client_start(
 int lwm2m_rd_client_stop(struct lwm2m_ctx *client_ctx,
 			   lwm2m_ctx_event_cb_t event_cb, bool deregister)
 {
-	struct lwm2m_rd_client_info *client = lwm2m_get_client_from_ctx(client_ctx, 9);
+	struct lwm2m_rd_client_info *client = lwm2m_get_client_from_ctx(client_ctx);
 	int ret;
 
 	k_mutex_lock(&client->mutex, K_FOREVER);
@@ -1530,7 +1530,7 @@ struct lwm2m_ctx *lwm2m_rd_client_ctx(void)
 
 int lwm2m_rd_client_connection_resume(struct lwm2m_ctx *client_ctx)
 {
-	struct lwm2m_rd_client_info *client = lwm2m_get_client_from_ctx(client_ctx, 10);
+	struct lwm2m_rd_client_info *client = lwm2m_get_client_from_ctx(client_ctx);
 
 	if (client->engine_state == ENGINE_REGISTRATION_DONE_RX_OFF) {
 #ifdef CONFIG_LWM2M_DTLS_SUPPORT
@@ -1556,7 +1556,7 @@ int lwm2m_rd_client_connection_resume(struct lwm2m_ctx *client_ctx)
 
 int lwm2m_rd_client_timeout(struct lwm2m_ctx *client_ctx)
 {
-	struct lwm2m_rd_client_info *client = lwm2m_get_client_from_ctx(client_ctx, 11);
+	struct lwm2m_rd_client_info *client = lwm2m_get_client_from_ctx(client_ctx);
 
 	if (!sm_is_registered(client)) {
 		return 0;
