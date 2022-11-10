@@ -1531,16 +1531,19 @@ int lwm2m_perform_read_op(struct lwm2m_message *msg, uint16_t content_format)
 	uint8_t num_read = 0U;
 
 	if (msg->path.level >= LWM2M_PATH_LEVEL_OBJECT_INST) {
+		/* Find the requested object instance */
 		obj_inst = get_engine_obj_inst(msg->path.obj_id, msg->path.obj_inst_id);
-		if (!obj_inst) {
-			/* When Object instace is indicated error have to be reported */
-			return -ENOENT;
-		}
 	} else if (msg->path.level == LWM2M_PATH_LEVEL_OBJECT) {
-		/* find first obj_inst with path's obj_id.
-		 * Path level 1 can accept NULL. It define empty payload to response.
-		 */
+		/* Find the first instance of the requested object */
 		obj_inst = next_engine_obj_inst(msg->path.obj_id, -1);
+	}
+
+	/*
+	 * If we don't have any instance(s), the payload will be empty. We need to return
+	 * an error instead of an empty payload which will be a malformed CoAP message.
+	 */
+	if (obj_inst == NULL) {
+		return -ENOENT;
 	}
 
 	/* set output content-format */
@@ -1558,7 +1561,7 @@ int lwm2m_perform_read_op(struct lwm2m_message *msg, uint16_t content_format)
 	if (msg->path.level > LWM2M_PATH_LEVEL_OBJECT_INST) {
 		obj_field = lwm2m_get_engine_obj_field(obj_inst->obj, msg->path.res_id);
 		if (obj_field && obj_field->data_type == LWM2M_RES_TYPE_OPAQUE) {
-			ret = lwm2m_perform_large_read_object (msg, obj_inst, obj_field);
+			ret = lwm2m_perform_large_read_object(msg, obj_inst, obj_field);
 			if (ret != -EAGAIN) {
 				return ret;
 			}
