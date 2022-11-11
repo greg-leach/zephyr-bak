@@ -192,7 +192,14 @@ static struct lwm2m_message *rd_get_message(struct lwm2m_rd_client_info *client)
 
 	client->rd_message.ctx = client->ctx;
 	return &client->rd_message;
+}
 
+static void rd_reset_message(struct lwm2m_rd_client_info *client)
+{
+	if (client->rd_message.ctx != NULL) {
+		LOG_WRN("Reset outstanding message for RD client %d", client->index);
+		lwm2m_reset_message(&client->rd_message, true);
+	}
 }
 
 struct lwm2m_message *lwm2m_get_ongoing_rd_msg(struct lwm2m_ctx *ctx, struct coap_pending *pending,
@@ -354,6 +361,7 @@ static void sm_handle_failure_state(struct lwm2m_ctx *ctx, enum sm_engine_state 
 		event = LWM2M_RD_CLIENT_EVENT_DEREGISTER_FAILURE;
 	}
 
+	rd_reset_message(client);
 	lwm2m_engine_stop(client->ctx);
 	set_sm_state(client->ctx, sm_state);
 
@@ -727,6 +735,7 @@ static int sm_select_security_inst(bool bootstrap_server, int *sec_obj_inst)
 
 static int sm_do_init(struct lwm2m_rd_client_info *client)
 {
+	rd_reset_message(client);
 	lwm2m_engine_stop(client->ctx);
 	client->ctx->sec_obj_inst = client->init_sec_obj_inst;
 	client->ctx->srv_obj_inst = client->init_srv_obj_inst;
@@ -822,6 +831,7 @@ static int sm_do_bootstrap_reg(struct lwm2m_rd_client_info *client)
 
 	/* clear out existing connection data */
 	if (client->ctx->sock_fd > -1) {
+		rd_reset_message(client);
 		lwm2m_engine_stop(client->ctx);
 	}
 
@@ -865,6 +875,7 @@ void engine_bootstrap_finish(struct lwm2m_ctx *ctx)
 static int sm_bootstrap_trans_done(struct lwm2m_rd_client_info *client)
 {
 	/* close down context resources */
+	rd_reset_message(client);
 	lwm2m_engine_stop(client->ctx);
 
 	/* reset security object instance */
@@ -1154,6 +1165,7 @@ static int sm_update_registration(struct lwm2m_rd_client_info *client)
 	if (ret) {
 		LOG_ERR("Failed to update registration. Falling back to full registration");
 
+		rd_reset_message(client);
 		lwm2m_engine_stop(client->ctx);
 		/* perform full registration */
 		set_sm_state(client->ctx, ENGINE_DO_REGISTRATION);
@@ -1272,6 +1284,7 @@ static void lwm2m_rd_client_service(uint32_t tag)
 		switch (get_sm_state(client)) {
 		case ENGINE_IDLE:
 			if (client->ctx->sock_fd > -1) {
+				rd_reset_message(client);
 				lwm2m_engine_stop(client->ctx);
 			}
 			break;
@@ -1335,6 +1348,7 @@ static void lwm2m_rd_client_service(uint32_t tag)
 			break;
 
 		case ENGINE_DEREGISTERED:
+			rd_reset_message(client);
 			lwm2m_engine_stop(client->ctx);
 			set_sm_state(client->ctx, ENGINE_IDLE);
 			break;
@@ -1438,6 +1452,7 @@ int lwm2m_rd_client_stop(struct lwm2m_ctx *client_ctx,
 		k_sleep(K_MSEC(STATE_MACHINE_UPDATE_INTERVAL_MS / 2));
 	}
 
+	rd_reset_message(client);
 	ret = lwm2m_engine_stop(client_ctx);
 	if (ret != 0) {
 		LOG_ERR("Could not stop engine: %d", ret);
