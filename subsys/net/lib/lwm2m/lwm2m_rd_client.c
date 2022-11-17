@@ -1407,6 +1407,7 @@ int lwm2m_rd_client_start(
 	if (lwm2m_transport_lookup(client_ctx) < 0) {
 		LOG_ERR("RD client %d invalid transport \"%s\"", client->index,
 			client_ctx->transport_name);
+		k_mutex_unlock(&client->mutex);
 		return -EINVAL;
 	}
 
