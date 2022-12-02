@@ -2507,6 +2507,8 @@ void lwm2m_coap_receive(struct lwm2m_ctx *client_ctx, uint8_t *buf, uint16_t buf
 
 		if (resp == LWM2M_COAP_RESP_NOT_HANDLED) {
 			LOG_DBG("No handler for ACK");
+		} else if (resp == LWM2M_COAP_RESP_NONE) {
+			return;
 		}
 	}
 
