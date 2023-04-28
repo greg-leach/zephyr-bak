@@ -1953,6 +1953,7 @@ static int handle_request(struct coap_packet *request, struct lwm2m_message *msg
 	struct lwm2m_block_context *block2_ctx = NULL;
 	enum coap_block_size block2_size;
 	bool last_block2 = false;
+	bool too_large = false;
 
 	/* set CoAP request / message */
 	msg->in.in_cpkt = request;
@@ -2142,8 +2143,10 @@ static int handle_request(struct coap_packet *request, struct lwm2m_message *msg
 		block_size = GET_BLOCK_SIZE(block_opt);
 		if (!last_block && coap_block_size_to_bytes(block_size) > payload_len) {
 			LOG_DBG("Trailing payload is discarded!");
-			r = -EFBIG;
-			goto error;
+			/* Reply to server with block1 option so it can retry with a
+			 * smaller payload.
+			 */
+			too_large = true;
 		}
 
 		block_num = GET_BLOCK_NUM(block_opt);
@@ -2190,8 +2193,12 @@ static int handle_request(struct coap_packet *request, struct lwm2m_message *msg
 				GET_BLOCK_SIZE(block_opt) - block_ctx->ctx.block_size + 1;
 		}
 
+		if (too_large) {
+			msg->code = COAP_RESPONSE_CODE_REQUEST_TOO_LARGE;
+			ignore = true;
+		}
 		/* Handle blockwise 1 (Part 1): Set response code */
-		if (!last_block) {
+		else if (!last_block) {
 			msg->code = COAP_RESPONSE_CODE_CONTINUE;
 		}
 	}
@@ -2371,6 +2378,9 @@ static int handle_request(struct coap_packet *request, struct lwm2m_message *msg
 				LOG_ERR("Fail adding block1 option: %d", r);
 				r = -EINVAL;
 				goto error;
+			} else if (too_large) {
+				/* Free block context when error happened */
+				free_block_ctx(block_ctx);
 			}
 		} else {
 			/* Free context when finished */
