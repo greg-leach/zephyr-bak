@@ -446,7 +446,7 @@ int lwm2m_pull_context_start_transfer(char *uri, struct requesting_object req, k
 	k_sem_give(&lwm2m_pull_sem);
 
 	context.obj_inst_id = req.obj_inst_id;
-	memcpy(context.uri, uri, LWM2M_PACKAGE_URI_LEN);
+	strncpy(context.uri, uri, LWM2M_PACKAGE_URI_LEN - 1);
 	context.is_firmware_uri = req.is_firmware_uri;
 	context.result_cb = req.result_cb;
 	context.write_cb = req.write_cb;
