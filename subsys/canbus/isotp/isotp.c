@@ -38,7 +38,23 @@ NET_BUF_POOL_VAR_DEFINE(isotp_tx_pool, CONFIG_ISOTP_TX_BUF_COUNT,
 			CONFIG_ISOTP_BUF_TX_DATA_POOL_SIZE, 0, NULL);
 #endif
 
-static void receive_state_machine(struct isotp_recv_ctx *ctx);
+static void receive_state_machine(struct isotp_recv_ctx *rctx);
+
+static inline void prepare_frame(struct can_frame *frame, struct isotp_msg_id *addr)
+{
+	frame->id = addr->ext_id;
+	frame->flags = ((addr->flags & ISOTP_MSG_IDE) != 0 ? CAN_FRAME_IDE : 0) |
+		       ((addr->flags & ISOTP_MSG_FDF) != 0 ? CAN_FRAME_FDF : 0) |
+		       ((addr->flags & ISOTP_MSG_BRS) != 0 ? CAN_FRAME_BRS : 0);
+}
+
+static inline void prepare_filter(struct can_filter *filter, struct isotp_msg_id *addr,
+				  uint32_t mask)
+{
+	filter->id = addr->ext_id;
+	filter->mask = mask;
+	filter->flags = CAN_FILTER_DATA | ((addr->flags & ISOTP_MSG_IDE) != 0 ? CAN_FILTER_IDE : 0);
+}
 
 /*
  * Wake every context that is waiting for a buffer
