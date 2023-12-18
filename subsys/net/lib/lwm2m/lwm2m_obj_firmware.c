@@ -46,12 +46,14 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 
 #define PACKAGE_URI_LEN				255
 
+#define MAX_UPDATE_PROTOCOLS		6
+
 /*
  * Calculate resource instances as follows:
  * start with FIRMWARE_MAX_ID
  * subtract EXEC resources (1)
  */
-#define RESOURCE_INSTANCE_COUNT	(FIRMWARE_MAX_ID - 1)
+#define RESOURCE_INSTANCE_COUNT	(FIRMWARE_MAX_ID - 1 + MAX_UPDATE_PROTOCOLS - 1)
 
 /* resource state variables */
 static uint8_t update_state[MAX_INSTANCE_COUNT];
@@ -458,7 +460,7 @@ static struct lwm2m_engine_obj_inst *firmware_create(uint16_t obj_inst_id)
 	INIT_OBJ_RES_OPTDATA(FIRMWARE_PACKAGE_VERSION_ID, res[index], i,
 			     res_inst[index], j);
 	INIT_OBJ_RES_MULTI_OPTDATA(FIRMWARE_UPDATE_PROTO_SUPPORT_ID, res[index], i,
-				 res_inst[index], j, 1, false);
+				 res_inst[index], j, MAX_UPDATE_PROTOCOLS, false);
 	INIT_OBJ_RES_DATA(FIRMWARE_UPDATE_DELIV_METHOD_ID, res[index], i,
 			  res_inst[index], j, &(delivery_method[index]),
 			  sizeof(delivery_method[index]));
