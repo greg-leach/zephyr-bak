@@ -6,6 +6,8 @@
 if(CONFIG_MBEDTLS)
 zephyr_interface_library_named(mbedTLS)
 
+  zephyr_library_sources_ifdef(CONFIG_MBEDTLS_SHELL shell.c)
+
   if(CONFIG_MBEDTLS_BUILTIN)
     if(CONFIG_MBEDTLS_ZEPHYR_ENTROPY AND NOT CONFIG_ENTROPY_HAS_DRIVER)
       message(WARNING "No entropy device on the system, using fake entropy source!")
@@ -95,7 +97,6 @@ zephyr_interface_library_named(mbedTLS)
     zephyr_library_sources(${mbedtls_base_src})
 
     zephyr_library_sources_ifdef(CONFIG_MBEDTLS_DEBUG debug.c)
-    zephyr_library_sources_ifdef(CONFIG_MBEDTLS_SHELL shell.c)
 
     zephyr_library_app_memory(k_mbedtls_partition)
     if(CONFIG_ARCH_POSIX AND CONFIG_ASAN AND NOT CONFIG_64BIT)
