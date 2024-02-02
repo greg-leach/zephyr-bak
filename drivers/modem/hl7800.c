@@ -5221,7 +5221,7 @@ static int setup_gprs_connection(char *access_point_name)
 static int set_bands(const char *bands, bool full_reboot)
 {
 	int ret;
-	char cmd[sizeof("AT+KBNDCFG=#,####################")];
+	char cmd[sizeof("AT+KBNDCFG=#,######################")];
 
 	snprintk(cmd, sizeof(cmd), "AT+KBNDCFG=%d,%s", iface_ctx.mdm_rat, bands);
 	ret = send_at_cmd(NULL, cmd, MDM_CMD_SEND_TIMEOUT, MDM_DEFAULT_AT_CMD_RETRIES, false);
