@@ -303,7 +303,7 @@ int can_mcan_start(const struct device *dev)
 {
 	const struct can_mcan_config *config = dev->config;
 	struct can_mcan_data *data = dev->data;
-	int err;
+	int err = 0;
 
 	if (data->started) {
 		return -EALREADY;
@@ -319,19 +319,19 @@ int can_mcan_start(const struct device *dev)
 
 	err = can_mcan_leave_init_mode(dev, K_MSEC(CAN_INIT_TIMEOUT_MS));
 	if (err != 0) {
-		LOG_ERR("failed to leave init mode");
+		LOG_ERR("failed to leave init mode (err %d)", err);
 
 		if (config->phy != NULL) {
 			/* Attempt to disable the CAN transceiver in case of error */
 			(void)can_transceiver_disable(config->phy);
 		}
 
-		return -EIO;
+		return err;
 	}
 
 	data->started = true;
 
-	return 0;
+	return err;
 }
 
 int can_mcan_stop(const struct device *dev)
