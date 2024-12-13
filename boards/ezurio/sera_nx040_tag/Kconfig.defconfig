@@ -1,0 +1,14 @@
+# Sera NX040 DVK board configuration
+
+# Copyright (c) 2024 Laird Connectivity
+# SPDX-License-Identifier: Apache-2.0
+
+if BOARD_SERA_NX040_TAG
+
+config BT_CTLR
+	default BT
+
+config HW_STACK_PROTECTION
+	default ARCH_HAS_STACK_PROTECTION
+
+endif # BOARD_SERA_NX040_TAG

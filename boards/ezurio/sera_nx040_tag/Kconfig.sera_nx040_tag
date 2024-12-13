@@ -1,0 +1,7 @@
+# Sera NX040 tag board configuration
+
+# Copyright (c) 2024 Ezurio
+# SPDX-License-Identifier: Apache-2.0
+
+config BOARD_SERA_NX040_TAG
+	select SOC_NRF52833_QIAA

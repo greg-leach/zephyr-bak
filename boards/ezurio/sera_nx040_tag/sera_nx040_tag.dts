@@ -1,0 +1,197 @@
+/*
+ * Copyright (c) 2024 Laird Connectivity
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/dts-v1/;
+#include <zephyr/dt-bindings/led/led.h>
+#include <nordic/nrf52833_qiaa.dtsi>
+#include "sera_nx040_tag-pinctrl.dtsi"
+
+/ {
+	model = "Sera NX040 tag";
+	compatible = "ezurio,sera_nx040_tag";
+
+	chosen {
+		zephyr,console = &cdc_acm_uart1;
+		zephyr,shell-uart = &cdc_acm_uart1;
+		zephyr,uart-mcumgr = &cdc_acm_uart1;
+		zephyr,bt-mon-uart = &cdc_acm_uart1;
+		zephyr,bt-c2h-uart = &cdc_acm_uart1;
+		zephyr,sram = &sram0;
+		zephyr,flash = &flash0;
+		zephyr,ieee802154 = &ieee802154;
+		nordic,pm-ext-flash = &at25;
+	};
+
+	fstab {
+		compatible = "zephyr,fstab";
+		lfs1: lfs1 {
+			compatible = "zephyr,fstab,littlefs";
+			mount-point = "/lfs1";
+			partition = <&littlefs_storage>;
+			automount;
+			read-size = <16>;
+			prog-size = <16>;
+			cache-size = <64>;
+			lookahead-size = <32>;
+			block-cycles = <512>;
+		};
+	};
+
+	buttons {
+		compatible = "gpio-keys";
+		button1: button_1 {
+			gpios = <&gpio1 3 GPIO_ACTIVE_LOW>;
+			label = "Button";
+		};
+	};
+
+	leds {
+		compatible = "gpio-leds";
+		led1: led_1 {
+			gpios = <&gpio0 22 GPIO_ACTIVE_LOW>;
+			label = "LED 1 (red)";
+		};
+		led2: led_2 {
+			gpios = <&gpio1 2 GPIO_ACTIVE_LOW>;
+			label = "LED 2 (green)";
+		};
+		led3: led_3 {
+			gpios = <&gpio0 3 GPIO_ACTIVE_LOW>;
+			label = "LED 3 (green)";
+		};
+		led4: led_4 {
+			gpios = <&gpio0 30 GPIO_ACTIVE_LOW>; 
+			label = "LED 4 (green)";
+		};
+		led5: led_5 {
+			gpios = <&gpio0 31 GPIO_ACTIVE_LOW>;
+			label = "LED 5 (green)";
+		};
+	};
+
+	/* These aliases are provided for compatibility with samples */
+	aliases {
+		mcuboot-button0 = &button1;
+		led0 = &led1;
+		led1 = &led2;
+		led2 = &led3;
+		led3 = &led4;
+		led4 = &led5;
+		watchdog0 = &wdt0;
+	};
+};
+
+&adc {
+	status = "okay";
+};
+
+&gpiote {
+	status = "okay";
+};
+
+&gpio0 {
+	status = "okay";
+};
+
+&gpio1 {
+	status = "okay";
+};
+
+&i2c0 {
+	compatible = "nordic,nrf-twi";
+	status = "okay";
+	pinctrl-0 = <&i2c0_default>;
+	pinctrl-1 = <&i2c0_sleep>;
+	pinctrl-names = "default", "sleep";
+};
+
+&flash0 {
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		boot_partition: partition@0 {
+			label = "mcuboot";
+			reg = <0x00000000 0xB000>;
+		};
+	};
+};
+
+zephyr_udc0: &usbd {
+	compatible = "nordic,nrf-usbd";
+	status = "okay";
+
+	cdc_acm_uart0: cdc_acm_uart0 {
+		compatible = "zephyr,cdc-acm-uart";
+	};
+
+	cdc_acm_uart1: cdc_acm_uart1 {
+		compatible = "zephyr,cdc-acm-uart";
+	};
+};
+
+&ieee802154 {
+	status = "okay";
+};
+
+/* SPI bus to UWB radio */
+&spi1 {
+	compatible = "nordic,nrf-spim";
+	status = "okay";
+	cs-gpios = <&gpio0 14 GPIO_ACTIVE_LOW>;
+	pinctrl-0 = <&spi1_default>;
+	pinctrl-1 = <&spi1_sleep>;
+	pinctrl-names = "default", "sleep";
+	uwb_radio: sr040@0 {
+		compatible = "nxp,sr040";
+		reg = <0>;
+		spi-max-frequency = <8000000>;
+		int-gpios = <&gpio0 15 GPIO_ACTIVE_LOW>;
+		ready-gpios = <&gpio0 12 GPIO_ACTIVE_LOW>;
+		reset-gpios = <&gpio1 7 GPIO_ACTIVE_LOW>;
+	};
+};
+
+/* SPI bus to module SPI flash and external SPI pins */
+&spi2 {
+	compatible = "nordic,nrf-spim";
+	status = "okay";
+	cs-gpios = <&gpio0 25 GPIO_ACTIVE_LOW>, <&gpio0 20 GPIO_ACTIVE_LOW>;
+	pinctrl-0 = <&spi2_default>;
+	pinctrl-1 = <&spi2_sleep>;
+	pinctrl-names = "default", "sleep";
+	at25: at25ff081@0 {
+		compatible = "jedec,spi-nor";
+		reg = <0>;
+		spi-max-frequency = <80000000>;
+		size = <8388608>;
+		has-dpd;
+		t-enter-dpd = <10000>;
+		t-exit-dpd = <35000>;
+	};
+};
+
+&at25 {
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		littlefs_storage: partition@90000 {
+			label = "littlefs_storage";
+			reg = <0x00090000 0x00070000>;
+		};
+	};
+};
+
+&uicr {
+	gpio-as-nreset;
+};
+
+&reg1 {
+	regulator-initial-mode = <NRF5X_REG_MODE_DCDC>;
+};

@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: Apache-2.0
+
+# Enable MPU
+CONFIG_ARM_MPU=y
+
+# enable GPIO
+CONFIG_GPIO=y
+
+# enable uart driver
+CONFIG_SERIAL=y
+
+# enable SPI
+CONFIG_SPI=y
+
+# SPI flash is included in the module
+CONFIG_SPI_NOR=y
+CONFIG_SPI_NOR_SFDP_RUNTIME=y
+CONFIG_FLASH_JESD216_API=y
+
+# enable console
+CONFIG_CONSOLE=y
+CONFIG_UART_CONSOLE=y
+
+# 32kHz clock source
+CONFIG_CLOCK_CONTROL_NRF_K32SRC_XTAL=y
+CONFIG_CLOCK_CONTROL_NRF_K32SRC_150PPM=y
+
+CONFIG_PINCTRL=y

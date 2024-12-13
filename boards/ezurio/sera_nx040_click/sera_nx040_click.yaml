@@ -1,0 +1,19 @@
+identifier: sera_nx040_click
+name: SERA_NX040_CLICK
+type: mcu
+arch: arm
+toolchain:
+  - zephyr
+  - gnuarmemb
+  - xtools
+supported:
+  - adc
+  - usb_device
+  - ble
+  - pwm
+  - watchdog
+  - gpio
+  - counter
+  - spi
+  - i2c
+vendor: ezurio
