@@ -1,0 +1,74 @@
+#include "bl654_dvk.dts"
+
+/delete-node/ &boot_partition;
+/delete-node/ &slot0_partition;
+/delete-node/ &slot1_partition;
+/delete-node/ &littlefs_storage;
+
+/ {
+	chosen {
+		nordic,pm-ext-flash = &mx25r40;
+	};
+
+	fstab {
+		compatible = "zephyr,fstab";
+		lfs1: lfs1 {
+			compatible = "zephyr,fstab,littlefs";
+			mount-point = "/lfs1";
+			partition = <&littlefs1_qspi>;
+			automount;
+			read-size = <16>;
+			prog-size = <16>;
+			cache-size = <64>;
+			lookahead-size = <32>;
+			block-cycles = <512>;
+		};
+	};
+};
+
+&flash0 {
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		boot_partition: partition@0 {
+			label = "mcuboot";
+			reg = <0x00000000 0x00010000>;
+		};
+
+		slot0_partition: partition@10000 {
+			label = "image-0";
+			reg = <0x00010000 0x00078000>;
+		};
+
+		slot1_partition: partition@88000 {
+			label = "image-1";
+			reg = <0x00088000 0x00078000>;
+		};
+	};
+};
+
+&mx25r40 {
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+		littlefs1_qspi: partition@0 {
+			label = "lfs1_qspi";
+			reg = <0x00000000 0x00080000>;
+		};
+	};
+};
+
+&qspi {
+	status = "okay";
+};
+
+&uart0 {
+	compatible = "nordic,nrf-uarte";
+};
+
+&uart1 {
+	status = "okay";
+};

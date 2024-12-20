@@ -1,0 +1,16 @@
+identifier: bl654_dvk/nrf52840/xtal32k_qspi_2mb
+name: BL654_DVK_XTAL32K_QSPI_2MB
+type: mcu
+arch: arm
+toolchain:
+  - zephyr
+  - gnuarmemb
+  - xtools
+supported:
+  - adc
+  - usb_device
+  - ble
+  - pwm
+  - watchdog
+  - qspi
+vendor: ezurio
