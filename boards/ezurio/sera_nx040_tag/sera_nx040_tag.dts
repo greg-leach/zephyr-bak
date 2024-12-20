@@ -116,7 +116,12 @@
 
 		boot_partition: partition@0 {
 			label = "mcuboot";
-			reg = <0x00000000 0xB000>;
+			reg = <0x00000000 0x00009200>;
+		};
+
+		slot0_partition: partition@9200 {
+			label = "image-0";
+			reg = <0x00009200 0x00076E00>;
 		};
 	};
 };
@@ -180,6 +185,15 @@ zephyr_udc0: &usbd {
 		compatible = "fixed-partitions";
 		#address-cells = <1>;
 		#size-cells = <1>;
+
+		slot1_partition: partition@0 {
+			label = "image-1";
+			reg = <0x00000000 0x00077000>;
+		};
+		scratch_partition: partition@77000 {
+			label = "image-scratch";
+			reg = <0x00077000 0x00019000>;
+		};
 
 		littlefs_storage: partition@90000 {
 			label = "littlefs_storage";
