@@ -1467,7 +1467,7 @@ static int send_data(struct hl7800_socket *sock, struct net_pkt *pkt)
 		}
 		snprintk(buf, sizeof(buf), "AT+KUDPSND=%d,\"%s\",%u,%zu",
 			 sock->socket_id, dst_addr,
-			 net_sin(&sock->dst)->sin_port, send_len);
+			 ntohs(net_sin(&sock->dst)->sin_port), send_len);
 	}
 	send_at_cmd(sock, buf, K_NO_WAIT, 0, false);
 
@@ -1615,8 +1615,8 @@ static int pkt_setup_ip_data(struct net_pkt *pkt, struct hl7800_socket *sock)
 			    &((struct sockaddr_in6 *)&sock->src)->sin6_addr)) {
 			return -1;
 		}
-		src_port = ntohs(net_sin6(&sock->src)->sin6_port);
-		dst_port = ntohs(net_sin6(&sock->dst)->sin6_port);
+		src_port = net_sin6(&sock->src)->sin6_port;
+		dst_port = net_sin6(&sock->dst)->sin6_port;
 
 		hdr_len = sizeof(struct net_ipv6_hdr);
 	}
@@ -1628,8 +1628,8 @@ static int pkt_setup_ip_data(struct net_pkt *pkt, struct hl7800_socket *sock)
 			    &((struct sockaddr_in *)&sock->src)->sin_addr)) {
 			return -1;
 		}
-		src_port = ntohs(net_sin(&sock->src)->sin_port);
-		dst_port = ntohs(net_sin(&sock->dst)->sin_port);
+		src_port = net_sin(&sock->src)->sin_port;
+		dst_port = net_sin(&sock->dst)->sin_port;
 
 		hdr_len = sizeof(struct net_ipv4_hdr);
 	}
@@ -5836,10 +5836,10 @@ static int configure_TCP_socket(struct hl7800_socket *sock)
 
 	if (sock->dst.sa_family == AF_INET6) {
 		af = MDM_HL7800_SOCKET_AF_IPV6;
-		dst_port = net_sin6(&sock->dst)->sin6_port;
+		dst_port = ntohs(net_sin6(&sock->dst)->sin6_port);
 	} else if (sock->dst.sa_family == AF_INET) {
 		af = MDM_HL7800_SOCKET_AF_IPV4;
-		dst_port = net_sin(&sock->dst)->sin_port;
+		dst_port = ntohs(net_sin(&sock->dst)->sin_port);
 	} else {
 		return -EINVAL;
 	}
@@ -6065,7 +6065,7 @@ static int offload_connect(struct net_context *context,
 	if (addr->sa_family == AF_INET6) {
 		net_ipaddr_copy(&net_sin6(&sock->dst)->sin6_addr,
 				&net_sin6(addr)->sin6_addr);
-		dst_port = ntohs(net_sin6(addr)->sin6_port);
+		dst_port = net_sin6(addr)->sin6_port;
 		net_sin6(&sock->dst)->sin6_port = dst_port;
 	} else
 #endif
@@ -6073,7 +6073,7 @@ static int offload_connect(struct net_context *context,
 		if (addr->sa_family == AF_INET) {
 		net_ipaddr_copy(&net_sin(&sock->dst)->sin_addr,
 				&net_sin(addr)->sin_addr);
-		dst_port = ntohs(net_sin(addr)->sin_port);
+		dst_port = net_sin(addr)->sin_port;
 		net_sin(&sock->dst)->sin_port = dst_port;
 	} else
 #endif
@@ -6082,7 +6082,7 @@ static int offload_connect(struct net_context *context,
 	}
 
 	if (dst_port < 0) {
-		LOG_ERR("Invalid port: %d", dst_port);
+		LOG_ERR("Invalid port: %d", ntohs(dst_port));
 		return -EINVAL;
 	}
 
@@ -6133,7 +6133,7 @@ static int offload_sendto(struct net_pkt *pkt, const struct sockaddr *dst_addr,
 {
 	struct net_context *context = net_pkt_context(pkt);
 	struct hl7800_socket *sock;
-	int ret, dst_port = 0;
+	int ret;
 
 	if (!context) {
 		return -EINVAL;
@@ -6149,16 +6149,14 @@ static int offload_sendto(struct net_pkt *pkt, const struct sockaddr *dst_addr,
 	if (dst_addr->sa_family == AF_INET6) {
 		net_ipaddr_copy(&net_sin6(&sock->dst)->sin6_addr,
 				&net_sin6(dst_addr)->sin6_addr);
-		dst_port = ntohs(net_sin6(dst_addr)->sin6_port);
-		net_sin6(&sock->dst)->sin6_port = dst_port;
+		net_sin6(&sock->dst)->sin6_port = net_sin6(dst_addr)->sin6_port;
 	} else
 #endif
 #if defined(CONFIG_NET_IPV4)
 		if (dst_addr->sa_family == AF_INET) {
 		net_ipaddr_copy(&net_sin(&sock->dst)->sin_addr,
 				&net_sin(dst_addr)->sin_addr);
-		dst_port = ntohs(net_sin(dst_addr)->sin_port);
-		net_sin(&sock->dst)->sin_port = dst_port;
+		net_sin(&sock->dst)->sin_port = net_sin(dst_addr)->sin_port;
 	} else
 #endif
 	{
