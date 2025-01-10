@@ -5381,7 +5381,7 @@ reboot:
 	 * allows the RAT to be changed (and will reset the modem).
 	 */
 #ifndef CONFIG_MODEM_HL7800_RAT_NO_CHANGE
-	if (iface_ctx.state != HL7800_STATE_READY) {
+	if (iface_ctx.state == HL7800_STATE_NOT_READY) {
 #if CONFIG_MODEM_HL7800_RAT_M1
 		if (iface_ctx.mdm_rat != MDM_RAT_CAT_M1) {
 			if (iface_ctx.new_rat_cmd_support) {
@@ -5585,7 +5585,7 @@ reboot:
 	SEND_AT_CMD_EXPECT_OK("AT+WPPP=0");
 
 #if CONFIG_MODEM_HL7800_SET_APN_NAME_ON_STARTUP
-	if (iface_ctx.state != HL7800_STATE_READY) {
+	if (iface_ctx.state == HL7800_STATE_NOT_READY) {
 		if (strncmp(iface_ctx.mdm_apn.value, CONFIG_MODEM_HL7800_APN_NAME,
 			    MDM_HL7800_APN_MAX_STRLEN) != 0) {
 			apn = CONFIG_MODEM_HL7800_APN_NAME;
