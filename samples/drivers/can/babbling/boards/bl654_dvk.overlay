@@ -1,0 +1,54 @@
+/ {
+	chosen{
+		zephyr,canbus = &tcan4550;
+	};
+};
+
+&pinctrl {
+	spi2_default: spi2_default {
+		group1 {
+			psels = <NRF_PSEL(SPIM_SCK, 1, 9)>,
+				<NRF_PSEL(SPIM_MOSI, 1, 8)>,
+				<NRF_PSEL(SPIM_MISO, 0, 4)>;
+		};
+	};
+
+	spi2_sleep: spi2_sleep {
+		group1 {
+			psels = <NRF_PSEL(SPIM_SCK, 1, 9)>,
+				<NRF_PSEL(SPIM_MOSI, 1, 8)>,
+				<NRF_PSEL(SPIM_MISO, 0, 4)>;
+			low-power-enable;
+		};
+	};
+};
+
+&spi2 {
+    compatible = "nordic,nrf-spi";
+	status = "okay";
+	cs-gpios = <&gpio0 16 GPIO_ACTIVE_LOW>;
+    pinctrl-0 = <&spi2_default>;
+	pinctrl-1 = <&spi2_sleep>;
+	pinctrl-names = "default", "sleep";
+	tcan4550: can@0 {
+		compatible = "ti,tcan4x5x";
+		status = "okay";
+		reg = <0>;
+		/* reduced spi-max-frequency to accommodate flywire connections */
+		spi-max-frequency = <2000000>;
+		clock-frequency = <40000000>;
+		reset-gpios = <&gpio0 15 GPIO_ACTIVE_HIGH>;
+		int-gpios = <&gpio0 12 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+		bosch,mram-cfg = <0x0 15 15 7 7 0 10 10>;
+		sjw = <1>;
+		sjw-data = <1>;
+		sample-point = <875>;
+		sample-point-data = <875>;
+		bus-speed = <125000>;
+		bus-speed-data = <1000000>;
+
+		can-transceiver {
+			max-bitrate = <8000000>;
+		};
+	};
+};
